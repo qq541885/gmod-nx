@@ -230,3 +230,17 @@ GMOD_WEAK long sendfile(int out_fd, int in_fd, long *offset, size_t count) {
   errno = ENOSYS;
   return -1;
 }
+
+/* ---- stdio handles ----
+ * newlib turns stdin/stdout/stderr into _REENT member access, so their
+ * address is not a link-time constant. Hand the import table the address of
+ * these variables instead, and fill in the values before loading modules. */
+FILE *gmod_stdin_p  = NULL;
+FILE *gmod_stdout_p = NULL;
+FILE *gmod_stderr_p = NULL;
+
+void gmod_stdio_init(void) {
+  gmod_stdin_p  = stdin;
+  gmod_stdout_p = stdout;
+  gmod_stderr_p = stderr;
+}

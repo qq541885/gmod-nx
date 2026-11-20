@@ -84,15 +84,59 @@ long sendfile(int out_fd, int in_fd, long *offset, size_t count);
 /* MAP_* / PROT_* for callers that only pass them through to mprotect */
 #ifndef PROT_NONE
 #define PROT_NONE  0
+/* newlib expands stdin/stdout/stderr to _REENT members, so &stdout is not a
+ * compile-time constant and cannot appear in a static initialiser. These
+ * three variables hold the FILE* values instead; their *addresses* are
+ * constants, which is what the import table needs. */
+extern FILE *gmod_stdin_p;
+extern FILE *gmod_stdout_p;
+extern FILE *gmod_stderr_p;
+void gmod_stdio_init(void);
+
 #endif
 #ifndef PROT_READ
 #define PROT_READ  1
+/* newlib expands stdin/stdout/stderr to _REENT members, so &stdout is not a
+ * compile-time constant and cannot appear in a static initialiser. These
+ * three variables hold the FILE* values instead; their *addresses* are
+ * constants, which is what the import table needs. */
+extern FILE *gmod_stdin_p;
+extern FILE *gmod_stdout_p;
+extern FILE *gmod_stderr_p;
+void gmod_stdio_init(void);
+
 #endif
 #ifndef PROT_WRITE
 #define PROT_WRITE 2
+/* newlib expands stdin/stdout/stderr to _REENT members, so &stdout is not a
+ * compile-time constant and cannot appear in a static initialiser. These
+ * three variables hold the FILE* values instead; their *addresses* are
+ * constants, which is what the import table needs. */
+extern FILE *gmod_stdin_p;
+extern FILE *gmod_stdout_p;
+extern FILE *gmod_stderr_p;
+void gmod_stdio_init(void);
+
 #endif
 #ifndef PROT_EXEC
 #define PROT_EXEC  4
+/* newlib expands stdin/stdout/stderr to _REENT members, so &stdout is not a
+ * compile-time constant and cannot appear in a static initialiser. These
+ * three variables hold the FILE* values instead; their *addresses* are
+ * constants, which is what the import table needs. */
+extern FILE *gmod_stdin_p;
+extern FILE *gmod_stdout_p;
+extern FILE *gmod_stderr_p;
+void gmod_stdio_init(void);
+
 #endif
+/* newlib expands stdin/stdout/stderr to _REENT members, so &stdout is not a
+ * compile-time constant and cannot appear in a static initialiser. These
+ * three variables hold the FILE* values instead; their *addresses* are
+ * constants, which is what the import table needs. */
+extern FILE *gmod_stdin_p;
+extern FILE *gmod_stdout_p;
+extern FILE *gmod_stderr_p;
+void gmod_stdio_init(void);
 
 #endif

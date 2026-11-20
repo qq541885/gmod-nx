@@ -30,6 +30,7 @@
 #include "jni_fake.h"
 #include "game_patches.h"
 #include "controller.h"
+#include "posix_shim.h"
 
 static void *heap_so_base = NULL;
 static size_t heap_so_limit = 0;
@@ -420,6 +421,7 @@ int main(void) {
   jni_init();
   proc_files_init(config.install_root);
 
+  gmod_stdio_init();
   load_modules();
 
   so_module *launcher = so_find_module("liblauncher.so");

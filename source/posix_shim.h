@@ -18,6 +18,7 @@
 #include <stdlib.h>
 #include <locale.h>
 #include <sys/types.h>
+#include <wchar.h>
 
 /* ---- _FORTIFY_SOURCE entry points ---- */
 size_t  shim___fread_chk(void *ptr, size_t size, size_t nmemb, size_t buflen, FILE *stream);
@@ -34,18 +35,18 @@ int shim_tolower_l(int c, void *loc);
 int shim_toupper_l(int c, void *loc);
 
 /* ---- wide ctype, _l variants ---- */
-int shim_iswalpha_l(int c, void *loc);
-int shim_iswblank_l(int c, void *loc);
-int shim_iswcntrl_l(int c, void *loc);
-int shim_iswdigit_l(int c, void *loc);
-int shim_iswlower_l(int c, void *loc);
-int shim_iswprint_l(int c, void *loc);
-int shim_iswpunct_l(int c, void *loc);
-int shim_iswspace_l(int c, void *loc);
-int shim_iswupper_l(int c, void *loc);
-int shim_iswxdigit_l(int c, void *loc);
-int shim_towlower_l(int c, void *loc);
-int shim_towupper_l(int c, void *loc);
+int shim_iswalpha_l(wint_t c, void *loc);
+int shim_iswblank_l(wint_t c, void *loc);
+int shim_iswcntrl_l(wint_t c, void *loc);
+int shim_iswdigit_l(wint_t c, void *loc);
+int shim_iswlower_l(wint_t c, void *loc);
+int shim_iswprint_l(wint_t c, void *loc);
+int shim_iswpunct_l(wint_t c, void *loc);
+int shim_iswspace_l(wint_t c, void *loc);
+int shim_iswupper_l(wint_t c, void *loc);
+int shim_iswxdigit_l(wint_t c, void *loc);
+int shim_towlower_l(wint_t c, void *loc);
+int shim_towupper_l(wint_t c, void *loc);
 
 /* ---- collation / transformation ---- */
 int    shim_strcoll_l(const char *a, const char *b, void *loc);

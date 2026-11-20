@@ -12,8 +12,6 @@
 
 #include "gles1_compat.h"
 
-#if !GMOD_HAVE_GLES1
-
 #define WEAK __attribute__((weak))
 
 WEAK void glColor4f(GLfloat r, GLfloat g, GLfloat b, GLfloat a) {
@@ -64,4 +62,3 @@ WEAK void glDrawTexfOES(GLfloat x, GLfloat y, GLfloat z, GLfloat width, GLfloat 
   (void)x; (void)y; (void)z; (void)width; (void)height;
 }
 
-#endif /* !GMOD_HAVE_GLES1 */

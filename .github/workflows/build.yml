@@ -1,11 +1,12 @@
 name: build-gmod-nx
 
 # 在 GitHub 的 runner 上编译，绕开本地无法访问 pkg.devkitpro.org 的问题。
-# runner 在境外，能正常拉 devkitPro 的包；容器镜像 devkitpro/devkita64 自带
-# 完整的 aarch64-none-elf 工具链和 libnx。
 #
-# 注意：容器作业用 `bash --noprofile --norc` 运行，会跳过 /etc/profile，
-# 所以 PATH 里默认没有 /usr/bin，pacman 会 command not found。这里显式给出 PATH。
+# 两个环境坑（都已踩过）：
+#  1. 容器作业用 `bash --noprofile --norc` 运行，跳过 /etc/profile，
+#     默认 PATH 里没有 /usr/bin —— 必须显式给 PATH。
+#  2. devkitpro/devkita64 里工具链在 $DEVKITPRO/devkitA64/bin，
+#     不在 $DEVKITPRO/tools/bin ；pacman 在 $DEVKITPRO/pacman/bin。
 
 on:
   push:
@@ -22,8 +23,9 @@ jobs:
       run:
         shell: bash
     env:
-      PATH: /opt/devkitpro/tools/bin:/opt/devkitpro/pacman/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
       DEVKITPRO: /opt/devkitpro
+      DEVKITA64: /opt/devkitpro/devkitA64
+      PATH: /opt/devkitpro/devkitA64/bin:/opt/devkitpro/tools/bin:/opt/devkitpro/pacman/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -32,35 +34,32 @@ jobs:
         run: |
           set -uo pipefail
           echo "PATH=$PATH"
-          echo "DEVKITPRO=${DEVKITPRO:-<unset>}"
-          echo "--- /opt ---"
-          ls -1 /opt 2>/dev/null || true
+          echo "DEVKITPRO=$DEVKITPRO"
+          echo "--- devkitA64/bin ---"
+          ls -1 "$DEVKITPRO/devkitA64/bin" 2>/dev/null | head -20 || echo "(empty or missing)"
           echo "--- tools ---"
-          command -v pacman     || echo "no pacman"
-          command -v dkp-pacman || echo "no dkp-pacman"
           command -v aarch64-none-elf-gcc || echo "no gcc"
-          echo "--- libnx ---"
-          ls -1 /opt/devkitpro 2>/dev/null || true
-          ls -1 /opt/devkitpro/libnx 2>/dev/null || true
+          command -v pacman || echo "no pacman"
+          echo "--- installed switch packages ---"
+          pacman -Q 2>/dev/null | grep -E '^(switch|libnx|devkit)' | head -20 || echo "(none)"
+          echo "--- portlibs ---"
+          ls -1 "$DEVKITPRO/portlibs/switch/lib" 2>/dev/null | head -20 || echo "(none)"
 
       - name: Install Switch portlibs
         run: |
           set -euo pipefail
-          PM="$(command -v dkp-pacman || command -v pacman || true)"
-          if [ -z "$PM" ]; then
-            echo "::error::找不到 pacman，容器镜像结构与预期不同"
-            ls -R /opt 2>/dev/null | head -50
-            exit 1
-          fi
+          PM="$(command -v pacman || command -v dkp-pacman || true)"
+          if [ -z "$PM" ]; then echo "::error::pacman not found"; exit 1; fi
           echo "using $PM"
-          "$PM" -Sy --noconfirm --needed
-          "$PM" -S  --noconfirm --needed \
-            switch-sdl2 \
-            switch-sdl2_image \
-            switch-mesa \
-            switch-libdrm_nouveau \
-            switch-zlib \
-            switch-ffmpeg
+          "$PM" -Sy --noconfirm --needed 2>&1 | tail -5
+          for pkg in switch-sdl2 switch-sdl2_image switch-mesa switch-libdrm_nouveau switch-zlib switch-ffmpeg; do
+            if "$PM" -Q "$pkg" >/dev/null 2>&1; then
+              echo "already installed: $pkg"
+            else
+              echo "installing: $pkg"
+              "$PM" -S --noconfirm --needed "$pkg" 2>&1 | tail -3 || echo "::warning::failed to install $pkg"
+            fi
+          done
           echo "--- verify ---"
           aarch64-none-elf-gcc --version | head -1
           ls -l "$DEVKITPRO/libnx/switch_rules"

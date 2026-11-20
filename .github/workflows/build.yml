@@ -83,9 +83,9 @@ jobs:
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: gmod_nx-nro
+          name: gmod-nx-nro
           path: |
-            gmod_nx.nro
-            gmod_nx.elf
-            gmod_nx.nacp
+            *.nro
+            *.elf
+            *.nacp
           if-no-files-found: error

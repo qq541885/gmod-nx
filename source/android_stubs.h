@@ -13,6 +13,7 @@
 #define __ANDROID_STUBS_H__
 
 #include <stdint.h>
+#include <stdbool.h>
 
 /* generic catch-alls */
 uintptr_t gmod_vk_fail(void);
@@ -38,9 +39,9 @@ void    *stub_AMediaCodec_getInputBuffer(void *codec, size_t idx, size_t *out_si
 void    *stub_AMediaCodec_getOutputBuffer(void *codec, size_t idx, size_t *out_size);
 int32_t  stub_AMediaCodec_dequeueInputBuffer(void *codec, int64_t timeout);
 int32_t  stub_AMediaCodec_dequeueOutputBuffer(void *codec, void *info, int64_t timeout);
-int      stub_AMediaFormat_getInt32(void *fmt, const char *name, int32_t *out);
-int      stub_AMediaFormat_getInt64(void *fmt, const char *name, int64_t *out);
-int      stub_AMediaFormat_getString(void *fmt, const char *name, const char **out);
+bool     stub_AMediaFormat_getInt32(void *fmt, const char *name, int32_t *out);
+bool     stub_AMediaFormat_getInt64(void *fmt, const char *name, int64_t *out);
+bool     stub_AMediaFormat_getString(void *fmt, const char *name, const char **out);
 
 extern const char stub_AMEDIAFORMAT_KEY_BIT_RATE[];
 extern const char stub_AMEDIAFORMAT_KEY_CHANNEL_COUNT[];

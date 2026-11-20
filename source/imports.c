@@ -38,6 +38,15 @@
 #include <switch.h>
 
 #include "config.h"
+
+/* GMod additions: Android platform surfaces, bionic shims, GLES1 fallbacks */
+#include "android_stubs.h"
+#include "posix_shim.h"
+#include "gles1_compat.h"
+#include <wctype.h>
+#include <sys/mman.h>
+#include <sys/socket.h>
+#include <sys/resource.h>
 #include "gyro.h"
 #include "so_util.h"
 #include "util.h"

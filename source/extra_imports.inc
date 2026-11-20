@@ -1,4 +1,4 @@
-﻿/* extra_imports.inc -- table entries appended to dynlib_functions[]
+/* extra_imports.inc -- table entries appended to dynlib_functions[]
  * generated from the GDroid 0.1.31 arm64-v8a symbol set; do not edit by hand.
  */
 
@@ -63,7 +63,7 @@
   { "glDisableVertexAttribArray", (uintptr_t)&glDisableVertexAttribArray },
   { "glDrawArrays", (uintptr_t)&glDrawArrays },
   { "glDrawBuffers", (uintptr_t)&glDrawBuffers },
-  { "glDrawTexfOES", (uintptr_t)&glDrawTexf },
+  { "glDrawTexfOES", (uintptr_t)&glDrawTexfOES },
   { "glEnable", (uintptr_t)&glEnable },
   { "glEnableClientState", (uintptr_t)&glEnableClientState },
   { "glEnableVertexAttribArray", (uintptr_t)&glEnableVertexAttribArray },

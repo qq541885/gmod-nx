@@ -26,6 +26,7 @@
 #include <sys/stat.h>
 
 #include "config.h"
+#include "android_stubs.h"
 #include "so_util.h"
 
 /* ------------------------------------------------------------------ */

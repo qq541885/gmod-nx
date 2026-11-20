@@ -20,6 +20,9 @@
 #include <locale.h>
 #include <time.h>
 #include <unistd.h>
+#include <fcntl.h>
+
+#include "posix_shim.h"
 
 /* ------------------------------------------------------------------ */
 /* _FORTIFY_SOURCE entry points                                         */
@@ -136,27 +139,11 @@ size_t shim_strftime_l(char *s, size_t max, const char *format,
   return strftime(s, max, format, tm);
 }
 
-/* ------------------------------------------------------------------ */
-/* locale object lifecycle                                              */
-/* ------------------------------------------------------------------ */
 
-/* Horizon has one locale. Hand out a stable non-NULL token so callers that
- * check for failure see success, and treat it as a no-op everywhere else. */
-static int g_fake_locale;
-
-void *newlocale(int category_mask, const char *locale, void *base) {
-  (void)category_mask; (void)locale; (void)base;
-  return &g_fake_locale;
-}
-
-void freelocale(void *loc) {
-  (void)loc;
-}
-
-void *uselocale(void *loc) {
-  (void)loc;
-  return &g_fake_locale;
-}
+/* The locale object lifecycle (newlocale / freelocale / uselocale) is left to
+ * newlib: it declares them in <locale.h> with locale_t, so any definition here
+ * with a different signature would be a conflicting type. Horizon has exactly
+ * one locale, and newlib's no-op handles behave correctly for that. */
 
 /* ------------------------------------------------------------------ */
 /* Linux-only calls the bionic binaries import                          */

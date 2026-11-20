@@ -336,25 +336,25 @@ GMOD_WEAK int setitimer(int which, const struct itimerval *new_value, struct iti
 }
 
 GMOD_WEAK int sigemptyset(sigset_t *set) {
-  if (set) *set = 0;
+  if (set) memset(set, 0, sizeof(*set));
   return 0;
 }
 
 GMOD_WEAK int sigaddset(sigset_t *set, int signum) {
   (void)signum;
-  if (set) *set = 0;
+  if (set) memset(set, 0, sizeof(*set));
   return 0;
 }
 
 GMOD_WEAK int sigprocmask(int how, const sigset_t *set, sigset_t *oldset) {
   (void)how; (void)set;
-  if (oldset) *oldset = 0;
+  if (oldset) memset(oldset, 0, sizeof(*oldset));
   return 0;
 }
 
 GMOD_WEAK int sigaltstack(const stack_t *ss, stack_t *old_ss) {
   (void)ss;
-  if (old_ss) { old_ss->ss_sp = NULL; old_ss->ss_size = 0; old_ss->ss_flags = 0; }
+  if (old_ss) memset(old_ss, 0, sizeof(*old_ss));
   return 0;
 }
 

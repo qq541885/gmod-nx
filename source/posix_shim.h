@@ -71,4 +71,27 @@ void     openlog(const char *ident, int option, int facility);
 void     closelog(void);
 void     syslog(int priority, const char *format, ...);
 
+
+/* ---- memory / socket / scheduling: no bare-metal header declares these ---- */
+int mprotect(void *addr, size_t len, int prot);
+int madvise(void *addr, size_t len, int advice);
+int shutdown(int sockfd, int how);
+int getpriority(int which, id_t who);
+int setpriority(int which, id_t who, int prio);
+long sendfile(int out_fd, int in_fd, long *offset, size_t count);
+
+/* MAP_* / PROT_* for callers that only pass them through to mprotect */
+#ifndef PROT_NONE
+#define PROT_NONE  0
+#endif
+#ifndef PROT_READ
+#define PROT_READ  1
+#endif
+#ifndef PROT_WRITE
+#define PROT_WRITE 2
+#endif
+#ifndef PROT_EXEC
+#define PROT_EXEC  4
+#endif
+
 #endif

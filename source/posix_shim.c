@@ -205,3 +205,28 @@ GMOD_WEAK void closelog(void) { }
 GMOD_WEAK void syslog(int priority, const char *format, ...) {
   (void)priority; (void)format;
 }
+GMOD_WEAK int mprotect(void *addr, size_t len, int prot) {
+  (void)addr; (void)len; (void)prot;
+  return 0;
+}
+
+GMOD_WEAK int madvise(void *addr, size_t len, int advice) {
+  (void)addr; (void)len; (void)advice;
+  return 0;
+}
+
+GMOD_WEAK int getpriority(int which, id_t who) {
+  (void)which; (void)who;
+  return 0;
+}
+
+GMOD_WEAK int setpriority(int which, id_t who, int prio) {
+  (void)which; (void)who; (void)prio;
+  return 0;
+}
+
+GMOD_WEAK long sendfile(int out_fd, int in_fd, long *offset, size_t count) {
+  (void)out_fd; (void)in_fd; (void)offset; (void)count;
+  errno = ENOSYS;
+  return -1;
+}

@@ -335,6 +335,21 @@ GMOD_WEAK int setitimer(int which, const struct itimerval *new_value, struct iti
   return 0;
 }
 
+/* newlib defines these as macros in <signal.h>; the macro expansion would
+ * turn a normal function definition into nonsense, so undef first. */
+#ifdef sigemptyset
+#undef sigemptyset
+#endif
+#ifdef sigaddset
+#undef sigaddset
+#endif
+#ifdef sigprocmask
+#undef sigprocmask
+#endif
+#ifdef sigaltstack
+#undef sigaltstack
+#endif
+
 GMOD_WEAK int sigemptyset(sigset_t *set) {
   if (set) memset(set, 0, sizeof(*set));
   return 0;

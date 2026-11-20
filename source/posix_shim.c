@@ -244,3 +244,126 @@ void gmod_stdio_init(void) {
   gmod_stdout_p = stdout;
   gmod_stderr_p = stderr;
 }
+/* ------------------------------------------------------------------ */
+/* POSIX calls newlib's bare-metal target does not implement            */
+/*                                                                      */
+/* All weak: if a future newlib grows a real version, it wins. The       */
+/* directory-relative forms collapse to their absolute equivalents      */
+/* because every fd Horizon can hand out refers to the same namespace.   */
+/* ------------------------------------------------------------------ */
+
+#include <stdarg.h>
+#include <signal.h>
+#include <sys/time.h>
+#include <dirent.h>
+#include <sys/stat.h>
+#include <fcntl.h>
+#include <unistd.h>
+
+GMOD_WEAK int gmod_fchmodat(int dirfd, const char *pathname, mode_t mode, int flags) {
+  (void)dirfd; (void)flags;
+  return chmod(pathname, mode);
+}
+GMOD_WEAK int fchmodat(int dirfd, const char *pathname, mode_t mode, int flags) {
+  return gmod_fchmodat(dirfd, pathname, mode, flags);
+}
+
+GMOD_WEAK int fchown(int fd, uid_t owner, gid_t group) {
+  (void)fd; (void)owner; (void)group;
+  return 0;
+}
+
+GMOD_WEAK gid_t getgid(void)  { return 0; }
+GMOD_WEAK gid_t getegid(void) { return 0; }
+
+GMOD_WEAK DIR *fdopendir(int fd) {
+  (void)fd;
+  return NULL;
+}
+
+GMOD_WEAK int futimens(int fd, const struct timespec times[2]) {
+  (void)fd; (void)times;
+  return -1;
+}
+
+GMOD_WEAK int openat(int dirfd, const char *pathname, int flags, ...) {
+  (void)dirfd;
+  mode_t mode = 0;
+  if (flags & O_CREAT) {
+    va_list ap; va_start(ap, flags); mode = (mode_t)va_arg(ap, int); va_end(ap);
+  }
+  return open(pathname, flags, mode);
+}
+
+GMOD_WEAK int unlinkat(int dirfd, const char *pathname, int flags) {
+  (void)dirfd;
+  return (flags & AT_REMOVEDIR) ? rmdir(pathname) : unlink(pathname);
+}
+
+GMOD_WEAK int renameat(int olddirfd, const char *oldpath, int newdirfd, const char *newpath) {
+  (void)olddirfd; (void)newdirfd;
+  return rename(oldpath, newpath);
+}
+
+GMOD_WEAK int pipe2(int pipefd[2], int flags) {
+  (void)flags;
+  return pipe(pipefd);
+}
+
+GMOD_WEAK ssize_t pread(int fd, void *buf, size_t count, off_t offset) {
+  const off_t save = lseek(fd, 0, SEEK_CUR);
+  if (save < 0) return -1;
+  if (lseek(fd, offset, SEEK_SET) < 0) return -1;
+  const ssize_t got = read(fd, buf, count);
+  (void)lseek(fd, save, SEEK_SET);
+  return got;
+}
+
+GMOD_WEAK ssize_t pwrite(int fd, const void *buf, size_t count, off_t offset) {
+  const off_t save = lseek(fd, 0, SEEK_CUR);
+  if (save < 0) return -1;
+  if (lseek(fd, offset, SEEK_SET) < 0) return -1;
+  const ssize_t put = write(fd, buf, count);
+  (void)lseek(fd, save, SEEK_SET);
+  return put;
+}
+
+GMOD_WEAK int setitimer(int which, const struct itimerval *new_value, struct itimerval *old_value) {
+  (void)which; (void)new_value;
+  if (old_value) { old_value->it_interval.tv_sec = 0; old_value->it_interval.tv_usec = 0;
+                   old_value->it_value.tv_sec = 0;    old_value->it_value.tv_usec = 0; }
+  return 0;
+}
+
+GMOD_WEAK int sigemptyset(sigset_t *set) {
+  if (set) *set = 0;
+  return 0;
+}
+
+GMOD_WEAK int sigaddset(sigset_t *set, int signum) {
+  (void)signum;
+  if (set) *set = 0;
+  return 0;
+}
+
+GMOD_WEAK int sigprocmask(int how, const sigset_t *set, sigset_t *oldset) {
+  (void)how; (void)set;
+  if (oldset) *oldset = 0;
+  return 0;
+}
+
+GMOD_WEAK int sigaltstack(const stack_t *ss, stack_t *old_ss) {
+  (void)ss;
+  if (old_ss) { old_ss->ss_sp = NULL; old_ss->ss_size = 0; old_ss->ss_flags = 0; }
+  return 0;
+}
+
+GMOD_WEAK long sysconf(int name) {
+  switch (name) {
+    case 30:  return 4096;   /* _SC_PAGESIZE */
+    case 29:  return 4096;   /* _SC_PAGE_SIZE */
+    case 2:   return 256;    /* _SC_OPEN_MAX */
+    case 0:   return 1;      /* _SC_ARG_MAX-ish upper bound */
+    default:  return -1;
+  }
+}

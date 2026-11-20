@@ -1,0 +1,41 @@
+﻿prepare.ps1 report
+apk    : C:\deepseekh\gdroid\GDroid-0.1.31.apk
+sha256 : c98c7128102bbd7c3ec8e1cd9b7103d1da3a3ff506c50ea0bae5111549a5d71d
+
+ok  libc++_shared.so                1,292,904  4397241b4bd20a8e579bfb41d21107857e12985f6a01ca0c2a5f83380d1270b4
+ok  libtier0.so                       214,144  84a7d00a7f9802f985455222f4124f52ae6e32cec645bc05acff538d0e2fce51
+ok  libvstdlib.so                     308,096  87ffc9c8353aae41797ba03d649f14222e9a29ada59614f10c7d6b8bbe888304
+ok  libsteam_api.so                     8,904  a365fbdb36e419ad3fb105430ab3694c123adc41e475b6a66e61bfbce674d177
+ok  libtogl.so                      1,115,440  9d13725045e53ce41bfdfe2cf22c11d64124502d5c29178f94daa3615db4f64d
+ok  libphonon.so                    7,032,352  628ee9e2976c7db18eea6fb53eaca5218d7e08bcc4bb7a9a16c90ab240b64c11
+ok  libfilesystem_stdio.so            752,096  010bc2c95f70ff4672e250139c92b0d95267cff8acceb4ff06aeeed29c83203a
+ok  libinputsystem.so                 210,568  3c2d9dd773c72757284796e1caee240a5799b5413b48a6b3afc9185d48345db9
+ok  libdatacache.so                   537,760  9a4f433e8b847504c62af3a09be6cca23b960ba8c95c9cef1e694079ddcd8daf
+ok  libscenefilecache.so              173,536  17f152e579027483223f928df25279cf1dff166418c1eb20ba884fa4ba3d37e0
+ok  libsoundemittersystem.so          281,656  ef9a53339c6e297a670bed09812bbdd6040092da8ab288dabf4a530b9d84cfa3
+ok  libvideo_services.so              171,184  30d20e016f06d8c856cbf73ee9b59489d578d71998e3298b724f6d288bfe5359
+ok  libvaudio_minimp3.so              182,584  10cc59b45bd938ff64a6d6f971b585ee140a14f4c5808be34b5641ba7bb78a27
+ok  libvaudio_opus.so                 678,408  967e14d74da90fd23484754bee6c2b8f727e709cb394e5ae6017fc34b138b453
+ok  libvaudio_speex.so                253,096  b397f019762c717ad6761d3e7573c8de75f0a783af3902c9490abeda6a4f48a4
+ok  libvphysics.so                  1,552,144  5e53752d2c30b7f22ac8eeadab6d65a6fc02247e542304ce5a51ea7667e70edc
+ok  libstudiorender.so                793,176  0b4727f74add5533721ca3ab2697af7f7f173fc98d0fe37e86c80b2d98e70c1c
+ok  libmaterialsystem.so            1,473,368  681f7126972457ba9dcdc177d1499fdd943e2cbed39c2fd73acdacc98843925f
+ok  libshaderapidx9.so                876,104  b49a4578b4f75fe36b6f5751401debd3fad9741bd8486ffa94e4817a034df59d
+ok  libstdshader_dx9.so             1,190,664  cc74728a84c9eba03358dc846a80080d9c7265a1e92a179bb5b42727752ea706
+ok  libvtex_dll.so                  1,237,816  2c2d432c5743af5dde9bb917b2025f880f484b2e219505319934ccf1127c66ca
+ok  libvgui2.so                       456,424  416d33c0573338f68b8521c84e0254f6c07d55d2f391c4c04a91ae326e2bfe3b
+ok  libvguimatsurface.so            2,554,760  c50fbd446aee0c28acc170e011e3647b70c57fefeb9867e6da58e01e0fe5a687
+ok  libengine.so                    8,968,600  1c651d18c6beec152fe3f48a35b5067bc0ee5bb6d2c04af525de96ad75957490
+ok  libGameUI.so                    5,443,744  76155ba00fbdd12b0626d2fd5dffa915ef08bfd6f7b92de9be9a9b4a72859506
+ok  libServerBrowser.so             2,438,896  7fb03533028882fa837c03af23ed528bd00cf29bfb5a0b285b4876de72d929f1
+ok  liblua_shared.so                2,488,456  694e611e4ed8d6914e666f016782dd86dd161e11e4fd9551a81181062c6a8790
+ok  libclient.so                   17,152,264  5ccb6971c7bb032c98e0e628f2f54a8c92c7fc7a608991455e7210ad85ad191f
+ok  libserver.so                   17,480,112  5f4835bc4cc2b3854f4d878955ba0dcaedde37fc4a47426dfa195131fbb01381
+ok  libopenxr_loader.so             1,662,344  763141820ead68e92543db0fefadca3dc5687e893072add86ab2fada7f95b3ff
+ok  libvrxr.so                      1,174,304  b67b7afba03e14bda36760d8f4ff2dee37b54af76c25ad1cd18cc59e9ec6218d
+ok  liblauncher.so                    550,624  44bf23f2c2d29585a77e1b982819cbaa9e65bdecd8bb8d221a35d4a358ca5ad8
+SKIP           : libSDL2.so  (switch-sdl2 提供同一批符号)
+SKIP           : libshaderapivulkan.so  (无 Vulkan 驱动；改走 shaderapidx9 -> togl -> GLES)
+SKIP           : libzstd-jni-1.5.7-6.so  (Java 侧使用，无模块依赖)
+
+skipped: libSDL2.so, libshaderapivulkan.so, libzstd-jni-1.5.7-6.so

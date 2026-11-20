@@ -56,12 +56,12 @@ void glTexCoordPointer(GLint size, GLenum type, GLsizei stride, const void *poin
 void glVertexPointer(GLint size, GLenum type, GLsizei stride, const void *pointer);
 void glTexEnvf(GLenum target, GLenum pname, GLfloat param);
 
-/* glDrawTexfOES is an OES extension: neither gl.h nor glext.h reliably
- * declares it in the devkitPro headers, so declare it unconditionally.
- * A duplicate declaration with an identical prototype is legal C. */
-void glDrawTexfOES(GLfloat x, GLfloat y, GLfloat z, GLfloat width, GLfloat height);
 
 #endif /* !GMOD_HAVE_GLES1 */
 
-
+/* glDrawTexfOES is an OES extension: neither gl.h nor glext.h reliably
+ * declares it in devkitPro's headers, so it is declared unconditionally
+ * here (outside the GLES1 guard). A duplicate declaration with an
+ * identical prototype is legal C. */
+void glDrawTexfOES(GLfloat x, GLfloat y, GLfloat z, GLfloat width, GLfloat height);
 #endif

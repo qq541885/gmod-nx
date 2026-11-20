@@ -382,3 +382,8 @@ GMOD_WEAK long sysconf(int name) {
     default:  return -1;
   }
 }
+GMOD_WEAK int pipe(int pipefd[2]) {
+  if (pipefd) { pipefd[0] = -1; pipefd[1] = -1; }
+  errno = ENOSYS;
+  return -1;
+}

@@ -341,3 +341,13 @@ void stub_ZSTD_trace_compress_begin(void) {}
 void stub_ZSTD_trace_compress_end(void) {}
 void stub_ZSTD_trace_decompress_begin(void) {}
 void stub_ZSTD_trace_decompress_end(void) {}
+
+/* ------------------------------------------------------------------ */
+/* Android-only SDL entry points the GDroid modules import              */
+/*                                                                      */
+/* switch-sdl2 has no Android backend, so these cannot forward anywhere: */
+/* hand back stand-ins that make the callers take their fallback path.   */
+/* ------------------------------------------------------------------ */
+
+void *gmod_android_get_jnienv(void) { return NULL; }
+void *gmod_android_get_activity(void) { return NULL; }

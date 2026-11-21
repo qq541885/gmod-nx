@@ -539,3 +539,11 @@
   { "wmemcpy", (uintptr_t)&wmemcpy },
   { "wmemmove", (uintptr_t)&wmemmove },
   { "wmemset", (uintptr_t)&wmemset },
+  /* ---- SDL2 entry points the GDroid modules need beyond the HL2 set ---- */
+  { "SDL_SetMainReady",         (uintptr_t)&SDL_SetMainReady },
+  { "SDL_GL_GetAttribute",      (uintptr_t)&SDL_GL_GetAttribute },
+  { "SDL_SetError",             (uintptr_t)&SDL_SetError },
+  { "SDL_GL_GetCurrentContext", (uintptr_t)&SDL_GL_GetCurrentContext },
+  /* Android-only: no switch-sdl2 equivalent, NULL makes callers fall back */
+  { "SDL_AndroidGetJNIEnv",     (uintptr_t)&gmod_android_get_jnienv },
+  { "SDL_AndroidGetActivity",   (uintptr_t)&gmod_android_get_activity },

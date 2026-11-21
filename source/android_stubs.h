@@ -103,4 +103,8 @@ void stub_ZSTD_trace_compress_end(void);
 void stub_ZSTD_trace_decompress_begin(void);
 void stub_ZSTD_trace_decompress_end(void);
 
+/* Android-only SDL helpers (see android_stubs.c) */
+void *gmod_android_get_jnienv(void);
+void *gmod_android_get_activity(void);
+
 #endif

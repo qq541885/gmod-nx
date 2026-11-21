@@ -323,17 +323,26 @@ int so_relocate(so_module *mod) {
        * part of the mapped image. Dereferencing it reads the ELF header (or
        * memory past the mapping) and produces nonsense relocation types, so
        * validate before walking the table. */
+      /* GDroid's modules do not always use a 24-byte stride for .rela.dyn;
+       * honour sh_entsize when present and only fall back to sizeof(Rela).
+       * Demanding an exact multiple of sizeof(Rela) silently discarded every
+       * relocation section in the whole module set. */
       const size_t rel_off = (size_t)mod->sec_hdr[i].sh_addr;
       const size_t rel_len = (size_t)mod->sec_hdr[i].sh_size;
       if (rel_off == 0 || rel_len == 0 ||
-          rel_off > mod->load_size || rel_len > mod->load_size - rel_off ||
-          (rel_len % sizeof(Elf64_Rela)) != 0) {
+          rel_off > mod->load_size || rel_len > mod->load_size - rel_off) {
         debugPrintf("so_relocate: %s skip bad reloc section %s off=%zu len=%zu load=%zu\n",
                     mod->name, sh_name, rel_off, rel_len, mod->load_size);
         continue;
       }
+      size_t rel_ent = (size_t)mod->sec_hdr[i].sh_entsize;
+      if (rel_ent != sizeof(Elf64_Rela)) {
+        debugPrintf("so_relocate: %s %s entsize=%zu size=%zu load=%zu\n",
+                    mod->name, sh_name, rel_ent, rel_len, mod->load_size);
+        if (rel_ent == 0 || rel_ent < sizeof(Elf64_Rela)) rel_ent = sizeof(Elf64_Rela);
+      }
       Elf64_Rela *rels = (Elf64_Rela *)((uintptr_t)mod->load_base + rel_off);
-      const int nrel = (int)(rel_len / sizeof(Elf64_Rela));
+      const int nrel = (int)(rel_len / rel_ent);
       for (int j = 0; j < nrel; j++) {
         if (rels[j].r_offset >= mod->load_size) {
           debugPrintf("%s: r_offset out of range (%zu >= %zu) entry %d\n",
@@ -451,17 +460,26 @@ int so_resolve(so_module *mod, DynLibFunction *funcs, int num_funcs, int taint_m
        * part of the mapped image. Dereferencing it reads the ELF header (or
        * memory past the mapping) and produces nonsense relocation types, so
        * validate before walking the table. */
+      /* GDroid's modules do not always use a 24-byte stride for .rela.dyn;
+       * honour sh_entsize when present and only fall back to sizeof(Rela).
+       * Demanding an exact multiple of sizeof(Rela) silently discarded every
+       * relocation section in the whole module set. */
       const size_t rel_off = (size_t)mod->sec_hdr[i].sh_addr;
       const size_t rel_len = (size_t)mod->sec_hdr[i].sh_size;
       if (rel_off == 0 || rel_len == 0 ||
-          rel_off > mod->load_size || rel_len > mod->load_size - rel_off ||
-          (rel_len % sizeof(Elf64_Rela)) != 0) {
+          rel_off > mod->load_size || rel_len > mod->load_size - rel_off) {
         debugPrintf("so_relocate: %s skip bad reloc section %s off=%zu len=%zu load=%zu\n",
                     mod->name, sh_name, rel_off, rel_len, mod->load_size);
         continue;
       }
+      size_t rel_ent = (size_t)mod->sec_hdr[i].sh_entsize;
+      if (rel_ent != sizeof(Elf64_Rela)) {
+        debugPrintf("so_relocate: %s %s entsize=%zu size=%zu load=%zu\n",
+                    mod->name, sh_name, rel_ent, rel_len, mod->load_size);
+        if (rel_ent == 0 || rel_ent < sizeof(Elf64_Rela)) rel_ent = sizeof(Elf64_Rela);
+      }
       Elf64_Rela *rels = (Elf64_Rela *)((uintptr_t)mod->load_base + rel_off);
-      const int nrel = (int)(rel_len / sizeof(Elf64_Rela));
+      const int nrel = (int)(rel_len / rel_ent);
       for (int j = 0; j < nrel; j++) {
         if (rels[j].r_offset >= mod->load_size) {
           debugPrintf("%s: r_offset out of range (%zu >= %zu) entry %d\n",

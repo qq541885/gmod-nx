@@ -319,8 +319,22 @@ int so_relocate(so_module *mod) {
   for (int i = 0; i < mod->elf_hdr->e_shnum; i++) {
     char *sh_name = mod->shstrtab + mod->sec_hdr[i].sh_name;
     if (strcmp(sh_name, ".rela.dyn") == 0 || strcmp(sh_name, ".rela.plt") == 0) {
-      Elf64_Rela *rels = (Elf64_Rela *)((uintptr_t)mod->load_base + mod->sec_hdr[i].sh_addr);
-      for (int j = 0; j < mod->sec_hdr[i].sh_size / sizeof(Elf64_Rela); j++) {
+      /* A section whose sh_addr is 0 or which extends past load_size is not
+       * part of the mapped image. Dereferencing it reads the ELF header (or
+       * memory past the mapping) and produces nonsense relocation types, so
+       * validate before walking the table. */
+      const size_t rel_off = (size_t)mod->sec_hdr[i].sh_addr;
+      const size_t rel_len = (size_t)mod->sec_hdr[i].sh_size;
+      if (rel_off == 0 || rel_len == 0 ||
+          rel_off > mod->load_size || rel_len > mod->load_size - rel_off ||
+          (rel_len % sizeof(Elf64_Rela)) != 0) {
+        debugPrintf("so_relocate: %s skip bad reloc section %s off=%zu len=%zu load=%zu\n",
+                    mod->name, sh_name, rel_off, rel_len, mod->load_size);
+        continue;
+      }
+      Elf64_Rela *rels = (Elf64_Rela *)((uintptr_t)mod->load_base + rel_off);
+      const int nrel = (int)(rel_len / sizeof(Elf64_Rela));
+      for (int j = 0; j < nrel; j++) {
         uintptr_t *ptr = (uintptr_t *)((uintptr_t)mod->load_base + rels[j].r_offset);
         Elf64_Sym *sym = &mod->syms[ELF64_R_SYM(rels[j].r_info)];
 
@@ -350,7 +364,10 @@ int so_relocate(so_module *mod) {
           }
 
           default:
-            fatal_error("Error: unknown relocation type:\n%x", type);
+            fatal_error("Error: unknown relocation type %x
+
+module: %s
+section: %s (idx %d)  entry %d/%d", type, mod->name, sh_name, i, j, nrel);
             break;
         }
       }
@@ -419,8 +436,22 @@ int so_resolve(so_module *mod, DynLibFunction *funcs, int num_funcs, int taint_m
   for (int i = 0; i < mod->elf_hdr->e_shnum; i++) {
     char *sh_name = mod->shstrtab + mod->sec_hdr[i].sh_name;
     if (strcmp(sh_name, ".rela.dyn") == 0 || strcmp(sh_name, ".rela.plt") == 0) {
-      Elf64_Rela *rels = (Elf64_Rela *)((uintptr_t)mod->load_base + mod->sec_hdr[i].sh_addr);
-      for (int j = 0; j < mod->sec_hdr[i].sh_size / sizeof(Elf64_Rela); j++) {
+      /* A section whose sh_addr is 0 or which extends past load_size is not
+       * part of the mapped image. Dereferencing it reads the ELF header (or
+       * memory past the mapping) and produces nonsense relocation types, so
+       * validate before walking the table. */
+      const size_t rel_off = (size_t)mod->sec_hdr[i].sh_addr;
+      const size_t rel_len = (size_t)mod->sec_hdr[i].sh_size;
+      if (rel_off == 0 || rel_len == 0 ||
+          rel_off > mod->load_size || rel_len > mod->load_size - rel_off ||
+          (rel_len % sizeof(Elf64_Rela)) != 0) {
+        debugPrintf("so_relocate: %s skip bad reloc section %s off=%zu len=%zu load=%zu\n",
+                    mod->name, sh_name, rel_off, rel_len, mod->load_size);
+        continue;
+      }
+      Elf64_Rela *rels = (Elf64_Rela *)((uintptr_t)mod->load_base + rel_off);
+      const int nrel = (int)(rel_len / sizeof(Elf64_Rela));
+      for (int j = 0; j < nrel; j++) {
         uintptr_t *ptr = (uintptr_t *)((uintptr_t)mod->load_base + rels[j].r_offset);
         Elf64_Sym *sym = &mod->syms[ELF64_R_SYM(rels[j].r_info)];
 

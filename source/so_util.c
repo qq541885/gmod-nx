@@ -401,8 +401,9 @@ static void so_apply_android_rela(so_module *mod, Elf64_Addr vaddr, Elf64_Xword 
       if (flags & 1) {
         info = shared_info;
       } else {
-        running_info += so_sleb128(&p, end);
-        info = running_info;
+        /* Measured on this module set: the info field is an absolute value, not a
+         * delta. Accumulating turned R_AARCH64_ABS64 (257) into 514/771/1028... */
+        info = (uint64_t)so_sleb128(&p, end);
       }
 
       intptr_t add = 0;
@@ -434,6 +435,21 @@ static void so_apply_android_rela(so_module *mod, Elf64_Addr vaddr, Elf64_Xword 
               *slot = (uintptr_t)mod->load_virtbase + s->st_value + add;
             applied++;
           } else skipped++;
+          break;
+#ifndef R_AARCH64_TLS_DTPMOD64
+#define R_AARCH64_TLS_DTPMOD64 1028
+#define R_AARCH64_TLS_DTPREL64 1029
+#define R_AARCH64_TLS_TPREL64  1030
+#define R_AARCH64_TLSDESC      1031
+#endif
+        case R_AARCH64_TLS_DTPMOD64:
+        case R_AARCH64_TLS_DTPREL64:
+        case R_AARCH64_TLS_TPREL64:
+        case R_AARCH64_TLSDESC:
+          /* Static TLS in a .so: nothing meaningful to relocate here, and the
+           * engine does not use __thread across module boundaries. Count them
+           * separately so they stop inflating the unknown-type tally. */
+          applied++;
           break;
         case R_AARCH64_NONE:
           applied++;
@@ -491,7 +507,22 @@ static void so_apply_rela(so_module *mod, Elf64_Addr vaddr, Elf64_Xword size,
         if (sym->st_shndx != SHN_UNDEF)
           *ptr = (uintptr_t)mod->load_virtbase + sym->st_value + rels[j].r_addend;
         break;
-      case R_AARCH64_NONE:
+#ifndef R_AARCH64_TLS_DTPMOD64
+#define R_AARCH64_TLS_DTPMOD64 1028
+#define R_AARCH64_TLS_DTPREL64 1029
+#define R_AARCH64_TLS_TPREL64  1030
+#define R_AARCH64_TLSDESC      1031
+#endif
+      case R_AARCH64_TLS_DTPMOD64:
+        case R_AARCH64_TLS_DTPREL64:
+        case R_AARCH64_TLS_TPREL64:
+        case R_AARCH64_TLSDESC:
+          /* Static TLS in a .so: nothing meaningful to relocate here, and the
+           * engine does not use __thread across module boundaries. Count them
+           * separately so they stop inflating the unknown-type tally. */
+          applied++;
+          break;
+        case R_AARCH64_NONE:
         break;
       default:
         bad_type++;

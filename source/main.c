@@ -218,18 +218,25 @@ static void load_modules(void) {
     so_resolve(&modules[i], dynlib_functions, dynlib_numfunctions, 1);
   }
 
+  debugPrintf("pass 2 done: relocate+resolve\n");
   apply_game_patches();
+  debugPrintf("patches applied\n");
   controller_prepare(so_find_module("libengine.so"), so_find_module("libinputsystem.so"));
+  debugPrintf("controller prepared\n");
 
   /* pass 3: map as code, then run initializers in dependency order */
   for (unsigned int i = 0; i < NUM_MODULES; i++) {
+    debugPrintf("finalize %s\n", module_names[i]);
     so_finalize(&modules[i]);
     so_flush_caches(&modules[i]);
   }
+  debugPrintf("pass 3 done: mapped as code\n");
   for (unsigned int i = 0; i < NUM_MODULES; i++) {
+    debugPrintf("init_array %s (%d ctors)\n", module_names[i], modules[i].num_init);
     so_execute_init_array(&modules[i]);
     so_free_temp(&modules[i]);
   }
+  debugPrintf("pass 4 done: init arrays ran\n");
   controller_install();
 }
 

@@ -336,10 +336,10 @@ static size_t so_sleb128(const uint8_t **pp, const uint8_t *end) {
 // 'APS2' followed by repeated groups of:
 //   sleb128 count
 //   sleb128 r_offset delta x count   (accumulated across groups)
-//   sleb128 r_info symbol  x count
-//   sleb128 r_info type    x count
+//   sleb128 r_info         x count   (full r_info: sym in the high bits, type in the low)
 //   sleb128 r_addend       x count
 //   pad to 4-byte alignment
+// Three streams, not four: there is no standalone type stream.
 static void so_apply_android_rela(so_module *mod, Elf64_Addr vaddr, Elf64_Xword size,
                                   Elf64_Addr min_vaddr) {
   if (!vaddr || size < 8) return;
@@ -363,24 +363,27 @@ static void so_apply_android_rela(so_module *mod, Elf64_Addr vaddr, Elf64_Xword 
     const size_t count = so_sleb128(&p, end);
     if (count == 0) break;
     groups++;
+    if (count > (1u << 20)) {
+      debugPrintf("%s: APS2 implausible count %zu\n", mod->name, count);
+      break;
+    }
     const uint8_t *o_off = p;
     const uint8_t *q = p;
     for (size_t i = 0; i < count; i++) so_sleb128(&q, end);
-    const uint8_t *o_sym = q;
-    for (size_t i = 0; i < count; i++) so_sleb128(&q, end);
-    const uint8_t *o_typ = q;
+    const uint8_t *o_info = q;
     for (size_t i = 0; i < count; i++) so_sleb128(&q, end);
     const uint8_t *o_add = q;
     for (size_t i = 0; i < count; i++) so_sleb128(&q, end);
     p = q;
     while (((size_t)(p - base) & 3) && p < end) p++;
 
-    const uint8_t *s_off = o_off, *s_sym = o_sym, *s_typ = o_typ, *s_add = o_add;
+    const uint8_t *s_off = o_off, *s_info = o_info, *s_add = o_add;
     for (size_t i = 0; i < count; i++) {
       cur_off += (intptr_t)so_sleb128(&s_off, end);
-      const size_t sym   = so_sleb128(&s_sym, end);
-      const size_t type  = so_sleb128(&s_typ, end);
+      const size_t info  = so_sleb128(&s_info, end);
       const intptr_t add = (intptr_t)so_sleb128(&s_add, end);
+      const unsigned sym  = (unsigned)ELF64_R_SYM(info);
+      const unsigned type = (unsigned)ELF64_R_TYPE(info);
       if (cur_off < (intptr_t)min_vaddr) { skipped++; continue; }
       const size_t slot_off = (size_t)(cur_off - (intptr_t)min_vaddr);
       if (slot_off + 8 > mod->load_size) { skipped++; continue; }
@@ -400,7 +403,13 @@ static void so_apply_android_rela(so_module *mod, Elf64_Addr vaddr, Elf64_Xword 
             applied++;
           } else skipped++;
           break;
+        case R_AARCH64_NONE:
+          applied++;
+          break;
         default:
+          if (skipped < 5)
+            debugPrintf("%s: APS2 unknown type %u at %llx\n",
+                        mod->name, type, (unsigned long long)cur_off);
           skipped++;
           break;
       }

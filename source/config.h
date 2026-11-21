@@ -1,4 +1,4 @@
-﻿/* config.h -- global configuration and config file handling
+/* config.h -- global configuration and config file handling
  *
  * This software may be modified and distributed under the terms
  * of the MIT license.  See the LICENSE file for details.
@@ -15,14 +15,13 @@
 
 // where the game data lives on the SD card. must contain garrysmod/,
 // sourceengine/ (or hl2/), platform/ and lib/ (the APK's arm64-v8a libraries).
-#define DEFAULT_INSTALL_ROOT "/switch/gmod_nx"
+#define DEFAULT_INSTALL_ROOT "/switch/gmodnx"
 
 #define CONFIG_NAME "config.txt"
 #define LOG_NAME "debug.log"
 
 // per-line SD card writes cost boot time; set to 1 when investigating a crash
-#define DEBUG_LOG 0
-
+#define DEBUG_LOG 1
 extern int screen_width;
 extern int screen_height;
 

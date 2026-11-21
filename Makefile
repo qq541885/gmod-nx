@@ -16,9 +16,9 @@ include $(DEVKITPRO)/libnx/switch_rules
 # DATA is a list of directories containing data files
 # INCLUDES is a list of directories containing header files
 #---------------------------------------------------------------------------------
-TARGET		:=	$(notdir $(CURDIR))
+TARGET		:=	gmodnx
 APP_TITLE	:=	Garry's Mod
-APP_AUTHOR	:=	gmod_nx
+APP_AUTHOR	:=	gmodnx
 APP_VERSION	:=	0.1.0
 APP_TITLEID	:=	0100A1B2C3D4F000
 BUILD		:=	build

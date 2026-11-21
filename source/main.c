@@ -202,8 +202,7 @@ static void load_modules(void) {
   /* pass 1: load everything so cross-module resolution sees all exports */
   for (unsigned int i = 0; i < NUM_MODULES; i++) {
     snprintf(path, sizeof(path), "lib/%s", module_names[i]);
-    debugPrintf("loading %s\
-", path);
+    debugPrintf("loading %s\n", path);
     const int res = so_load(&modules[i], path, base, remaining);
     if (res < 0)
       fatal_error("Could not load\n%s\n(so_load: %d)", path, res);
@@ -214,13 +213,14 @@ static void load_modules(void) {
 
   /* pass 2: relocate + resolve now that every export is visible */
   for (unsigned int i = 0; i < NUM_MODULES; i++) {
+    debugPrintf("relocate %s\n", module_names[i]);
     so_relocate(&modules[i]);
     so_resolve(&modules[i], dynlib_functions, dynlib_numfunctions, 1);
   }
+  debugPrintf("pass 2 done\n");
 
-  debugPrintf("pass 2 done: relocate+resolve\n");
   apply_game_patches();
-  debugPrintf("patches applied\n");
+  debugPrintf("patches done\n");
   controller_prepare(so_find_module("libengine.so"), so_find_module("libinputsystem.so"));
   debugPrintf("controller prepared\n");
 
@@ -230,14 +230,16 @@ static void load_modules(void) {
     so_finalize(&modules[i]);
     so_flush_caches(&modules[i]);
   }
-  debugPrintf("pass 3 done: mapped as code\n");
+  debugPrintf("pass 3 done: all modules mapped RX\n");
+
   for (unsigned int i = 0; i < NUM_MODULES; i++) {
     debugPrintf("init_array %s (%d ctors)\n", module_names[i], modules[i].num_init);
     so_execute_init_array(&modules[i]);
     so_free_temp(&modules[i]);
   }
-  debugPrintf("pass 4 done: init arrays ran\n");
+  debugPrintf("pass 4 done: all ctors ran\n");
   controller_install();
+  debugPrintf("controller installed, load_modules returning\n");
 }
 
 static void append_arg(char *dst, size_t dst_size, const char *arg) {

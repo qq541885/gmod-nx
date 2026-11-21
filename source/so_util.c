@@ -47,6 +47,15 @@
 #define SHT_ANDROID_RELA   0x60000002
 #endif
 
+/* TLS relocation types: present in the packed tables, meaningless to patch
+ * for a .so running in a single process on Horizon. */
+#ifndef R_AARCH64_TLS_DTPMOD64
+#define R_AARCH64_TLS_DTPMOD64 1028
+#define R_AARCH64_TLS_DTPREL64 1029
+#define R_AARCH64_TLS_TPREL64  1030
+#define R_AARCH64_TLSDESC      1031
+#endif
+
 static so_module *so_list = NULL;
 
 so_module *so_first(void) {
@@ -401,8 +410,9 @@ static void so_apply_android_rela(so_module *mod, Elf64_Addr vaddr, Elf64_Xword 
       if (flags & 1) {
         info = shared_info;
       } else {
-        /* Measured on this module set: the info field is an absolute value, not a
-         * delta. Accumulating turned R_AARCH64_ABS64 (257) into 514/771/1028... */
+        /* Measured on this module set: r_info is an absolute value here, not a
+         * delta. Accumulating turned R_AARCH64_ABS64 (257) into the bogus
+         * 514 / 771 / 1028 / 1285 sequence seen in the logs. */
         info = (uint64_t)so_sleb128(&p, end);
       }
 
@@ -436,19 +446,11 @@ static void so_apply_android_rela(so_module *mod, Elf64_Addr vaddr, Elf64_Xword 
             applied++;
           } else skipped++;
           break;
-#ifndef R_AARCH64_TLS_DTPMOD64
-#define R_AARCH64_TLS_DTPMOD64 1028
-#define R_AARCH64_TLS_DTPREL64 1029
-#define R_AARCH64_TLS_TPREL64  1030
-#define R_AARCH64_TLSDESC      1031
-#endif
         case R_AARCH64_TLS_DTPMOD64:
         case R_AARCH64_TLS_DTPREL64:
         case R_AARCH64_TLS_TPREL64:
         case R_AARCH64_TLSDESC:
-          /* Static TLS in a .so: nothing meaningful to relocate here, and the
-           * engine does not use __thread across module boundaries. Count them
-           * separately so they stop inflating the unknown-type tally. */
+          /* Static TLS inside a .so: there is no thread block to patch here. */
           applied++;
           break;
         case R_AARCH64_NONE:
@@ -507,22 +509,7 @@ static void so_apply_rela(so_module *mod, Elf64_Addr vaddr, Elf64_Xword size,
         if (sym->st_shndx != SHN_UNDEF)
           *ptr = (uintptr_t)mod->load_virtbase + sym->st_value + rels[j].r_addend;
         break;
-#ifndef R_AARCH64_TLS_DTPMOD64
-#define R_AARCH64_TLS_DTPMOD64 1028
-#define R_AARCH64_TLS_DTPREL64 1029
-#define R_AARCH64_TLS_TPREL64  1030
-#define R_AARCH64_TLSDESC      1031
-#endif
-      case R_AARCH64_TLS_DTPMOD64:
-        case R_AARCH64_TLS_DTPREL64:
-        case R_AARCH64_TLS_TPREL64:
-        case R_AARCH64_TLSDESC:
-          /* Static TLS in a .so: nothing meaningful to relocate here, and the
-           * engine does not use __thread across module boundaries. Count them
-           * separately so they stop inflating the unknown-type tally. */
-          applied++;
-          break;
-        case R_AARCH64_NONE:
+      case R_AARCH64_NONE:
         break;
       default:
         bad_type++;

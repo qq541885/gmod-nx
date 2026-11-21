@@ -138,9 +138,30 @@ int so_load(so_module *mod, const char *filename, void *base, size_t max_size) {
   if (fd == NULL)
     return -1;
 
-  fseek(fd, 0, SEEK_END);
-  mod->so_size = ftell(fd);
-  fseek(fd, 0, SEEK_SET);
+  /* Prefer stat(): ftell() after fseek(SEEK_END) returns -1 for some files on
+   * the libnx FAT driver, and -1 widened to size_t is 0xFFFFFFFFFFFFFFFF,
+   * which turns into a guaranteed malloc failure. */
+  {
+    struct stat st;
+    if (stat(filename, &st) == 0 && S_ISREG(st.st_mode) && st.st_size > 0) {
+      mod->so_size = (size_t)st.st_size;
+    } else {
+      fseek(fd, 0, SEEK_END);
+      const long sz = ftell(fd);
+      if (sz <= 0) {
+        debugPrintf("so_load: %s size lookup failed (ftell=%ld)\n", filename, sz);
+        fclose(fd);
+        return -1;
+      }
+      mod->so_size = (size_t)sz;
+      fseek(fd, 0, SEEK_SET);
+    }
+    if (mod->so_size < 4096 || mod->so_size > (size_t)512 * 1024 * 1024) {
+      debugPrintf("so_load: %s implausible size %zu\n", filename, mod->so_size);
+      fclose(fd);
+      return -1;
+    }
+  }
 
   mod->so_base = malloc(mod->so_size);
   if (!mod->so_base) {

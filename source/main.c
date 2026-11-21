@@ -33,6 +33,10 @@
 #include "posix_shim.h"
 
 static void *heap_so_base = NULL;
+/* __libnx_initheap runs before newlib's heap exists: touching stdio there
+ * (debugPrintf -> fopen -> malloc) crashes the process before anything can be
+ * logged. Record the figures and print them from main() instead. */
+static size_t g_diag_total, g_diag_avail, g_diag_used, g_diag_heap, g_diag_pool;
 static size_t heap_so_limit = 0;
 
 /* Load order matters twice:
@@ -120,11 +124,12 @@ void __libnx_initheap(void) {
   heap_so_base = (void *)ALIGN_MEM((uintptr_t)heap_so_base, 0x1000);
   heap_so_limit = (char *)addr + size - (char *)heap_so_base;
 
-  /* heap diag: without these numbers a malloc failure is undebuggable */
-  debugPrintf("heap diag: total=%zuMB available=%zuMB used=%zuMB\n",
-              size >> 20, mem_available >> 20, mem_used >> 20);
-  debugPrintf("heap diag: newlib heap=%zuMB  so pool=%zuMB\n",
-              fake_heap_size >> 20, so_size >> 20);
+  g_diag_total = size;
+  g_diag_avail = mem_available;
+  g_diag_used  = mem_used;
+  g_diag_heap  = fake_heap_size;
+  g_diag_pool  = so_size;
+  /* No stdio here: this runs before newlib's heap exists. */
 }
 
 /* render at the real panel size so the engine's GL viewport fills switch-sdl2's
@@ -404,6 +409,9 @@ static void start_clock_thread(void) {
 
 int main(void) {
   saltynx_start();
+  debugPrintf("heap: total=%zuMB avail=%zuMB used=%zuMB newlib=%zuMB pool=%zuMB\n",
+              g_diag_total >> 20, g_diag_avail >> 20, g_diag_used >> 20,
+              g_diag_heap >> 20, g_diag_pool >> 20);
   atexit(saltynx_stop);
   cpu_boost(1);
 

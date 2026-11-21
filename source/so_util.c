@@ -34,6 +34,19 @@
 #define DT_ANDROID_RELRSZ  0x6fffe001
 #define DT_ANDROID_RELRENT 0x6fffe003
 
+/* Android's APS2 packed relocations. Not the same thing as DT_RELR: the table
+ * is a SLEB128 stream, and the corresponding section carries
+ * SHT_ANDROID_RELA (0x60000002) with sh_entsize == 1. */
+#ifndef DT_ANDROID_RELA
+#define DT_ANDROID_REL     0x6000000f
+#define DT_ANDROID_RELSZ   0x60000010
+#define DT_ANDROID_RELA    0x60000011
+#define DT_ANDROID_RELASZ  0x60000012
+#endif
+#ifndef SHT_ANDROID_RELA
+#define SHT_ANDROID_RELA   0x60000002
+#endif
+
 static so_module *so_list = NULL;
 
 so_module *so_first(void) {
@@ -301,6 +314,102 @@ static Elf64_Addr so_min_load_vaddr(so_module *mod) {
   return (min == (Elf64_Addr)~0ULL) ? 0 : min;
 }
 
+// SLEB128 reader for Android's packed relocation stream.
+static size_t so_sleb128(const uint8_t **pp, const uint8_t *end) {
+  const uint8_t *p = *pp;
+  size_t result = 0;
+  int shift = 0;
+  uint8_t byte = 0;
+  while (p < end) {
+    byte = *p++;
+    result |= (size_t)(byte & 0x7F) << shift;
+    shift += 7;
+    if (!(byte & 0x80)) break;
+  }
+  if (shift < 64 && (byte & 0x40))
+    result |= ~(size_t)0 << shift;
+  *pp = p;
+  return result;
+}
+
+// APS2 (DT_ANDROID_RELA / SHT_ANDROID_RELA) decoder.
+// 'APS2' followed by repeated groups of:
+//   sleb128 count
+//   sleb128 r_offset delta x count   (accumulated across groups)
+//   sleb128 r_info symbol  x count
+//   sleb128 r_info type    x count
+//   sleb128 r_addend       x count
+//   pad to 4-byte alignment
+static void so_apply_android_rela(so_module *mod, Elf64_Addr vaddr, Elf64_Xword size,
+                                  Elf64_Addr min_vaddr) {
+  if (!vaddr || size < 8) return;
+  if (vaddr < min_vaddr) return;
+  const size_t off = (size_t)(vaddr - min_vaddr);
+  if (off >= mod->load_size || size > mod->load_size - off) {
+    debugPrintf("%s: APS2 block outside image\n", mod->name);
+    return;
+  }
+  const uint8_t *base = (const uint8_t *)((uintptr_t)mod->load_base + off);
+  const uint8_t *end  = base + size;
+  if (memcmp(base, "APS2", 4) != 0) {
+    debugPrintf("%s: APS2 magic missing (%02x %02x %02x %02x)\n", mod->name,
+                base[0], base[1], base[2], base[3]);
+    return;
+  }
+  const uint8_t *p = base + 4;
+  intptr_t cur_off = 0;
+  long applied = 0, skipped = 0, groups = 0;
+  while (p < end) {
+    const size_t count = so_sleb128(&p, end);
+    if (count == 0) break;
+    groups++;
+    const uint8_t *o_off = p;
+    const uint8_t *q = p;
+    for (size_t i = 0; i < count; i++) so_sleb128(&q, end);
+    const uint8_t *o_sym = q;
+    for (size_t i = 0; i < count; i++) so_sleb128(&q, end);
+    const uint8_t *o_typ = q;
+    for (size_t i = 0; i < count; i++) so_sleb128(&q, end);
+    const uint8_t *o_add = q;
+    for (size_t i = 0; i < count; i++) so_sleb128(&q, end);
+    p = q;
+    while (((size_t)(p - base) & 3) && p < end) p++;
+
+    const uint8_t *s_off = o_off, *s_sym = o_sym, *s_typ = o_typ, *s_add = o_add;
+    for (size_t i = 0; i < count; i++) {
+      cur_off += (intptr_t)so_sleb128(&s_off, end);
+      const size_t sym   = so_sleb128(&s_sym, end);
+      const size_t type  = so_sleb128(&s_typ, end);
+      const intptr_t add = (intptr_t)so_sleb128(&s_add, end);
+      if (cur_off < (intptr_t)min_vaddr) { skipped++; continue; }
+      const size_t slot_off = (size_t)(cur_off - (intptr_t)min_vaddr);
+      if (slot_off + 8 > mod->load_size) { skipped++; continue; }
+      uintptr_t *slot = (uintptr_t *)((uintptr_t)mod->load_base + slot_off);
+      switch (type) {
+        case R_AARCH64_RELATIVE:
+          *slot = (uintptr_t)mod->load_virtbase + add;
+          applied++;
+          break;
+        case R_AARCH64_ABS64:
+        case R_AARCH64_GLOB_DAT:
+        case R_AARCH64_JUMP_SLOT:
+          if (sym < (size_t)mod->num_syms) {
+            Elf64_Sym *s = &mod->syms[sym];
+            if (s->st_shndx != SHN_UNDEF)
+              *slot = (uintptr_t)mod->load_virtbase + s->st_value + add;
+            applied++;
+          } else skipped++;
+          break;
+        default:
+          skipped++;
+          break;
+      }
+    }
+  }
+  debugPrintf("%s: APS2 %ld groups, %ld applied, %ld skipped\n",
+              mod->name, groups, applied, skipped);
+}
+
 // Walk one RELA table located at a link-time vaddr. Diagnostics instead of
 // dying: one malformed entry must not cost the whole module.
 static void so_apply_rela(so_module *mod, Elf64_Addr vaddr, Elf64_Xword size,
@@ -407,20 +516,24 @@ int so_relocate(so_module *mod) {
     relr_size = so_dynamic_tag(mod, DT_ANDROID_RELRSZ);
   }
 
-  debugPrintf("%s: tags RELA=%llx/%llu RELR=%llx/%llu JMPREL=%llx/%llu min_vaddr=%llx\n",
+  const Elf64_Xword arela   = so_dynamic_tag(mod, DT_ANDROID_RELA);
+  const Elf64_Xword arelasz = so_dynamic_tag(mod, DT_ANDROID_RELASZ);
+
+  debugPrintf("%s: tags RELA=%llx/%llu APS2=%llx/%llu RELR=%llx/%llu JMPREL=%llx/%llu\n",
               mod->name,
               (unsigned long long)rela, (unsigned long long)relasz,
+              (unsigned long long)arela, (unsigned long long)arelasz,
               (unsigned long long)relr_off, (unsigned long long)relr_size,
-              (unsigned long long)jmprel, (unsigned long long)pltrelsz,
-              (unsigned long long)min_vaddr);
+              (unsigned long long)jmprel, (unsigned long long)pltrelsz);
 
-  /* Section headers in this module set are unreliable: .rela.dyn reports
-   * sh_entsize=1 and a sh_size far smaller than the real table, so every
-   * entry read through them had an out-of-range r_offset. Nothing here
-   * consults them any more; everything comes from the dynamic section, which
-   * is what any real loader does. */
+  /* Section headers in this module set are unreliable: .rela.dyn is
+   * SHT_ANDROID_RELA with sh_entsize==1, and the payload is an APS2 stream,
+   * not an array of Elf64_Rela. Nothing here consults them any more. */
   if (rela && relasz)
     so_apply_rela(mod, rela, relasz, relaent, min_vaddr);
+
+  if (arela && arelasz)
+    so_apply_android_rela(mod, arela, arelasz, min_vaddr);
 
   /* RELATIVE relocations first, then symbol slots land on top of them. */
   if (relr_off && relr_size) {

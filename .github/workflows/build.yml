@@ -47,22 +47,35 @@ jobs:
 
       - name: Install Switch portlibs
         run: |
-          set -euo pipefail
+          # pkg.devkitpro.org returns 403 from some CI egress IPs intermittently.
+          # The devkita64 image already ships switch-dev + most portlibs, so a
+          # failed sync must not abort the job: tolerate it and rely on whatever
+          # is already present.
+          set -uo pipefail
           PM="$(command -v pacman || command -v dkp-pacman || true)"
           if [ -z "$PM" ]; then echo "::error::pacman not found"; exit 1; fi
           echo "using $PM"
-          "$PM" -Sy --noconfirm --needed 2>&1 | tail -5
+
+          "$PM" -Sy --noconfirm --needed 2>&1 | tail -5 || echo "::warning::pacman -Sy failed (transient 403), continuing with what is installed"
+
           for pkg in switch-sdl2 switch-sdl2_image switch-mesa switch-libdrm_nouveau switch-zlib switch-ffmpeg; do
             if "$PM" -Q "$pkg" >/dev/null 2>&1; then
               echo "already installed: $pkg"
             else
               echo "installing: $pkg"
-              "$PM" -S --noconfirm --needed "$pkg" 2>&1 | tail -3 || echo "::warning::failed to install $pkg"
+              "$PM" -S --noconfirm --needed "$pkg" 2>&1 | tail -3 || echo "::warning::install failed: $pkg"
             fi
           done
-          echo "--- verify ---"
-          aarch64-none-elf-gcc --version | head -1
-          ls -l "$DEVKITPRO/libnx/switch_rules"
+
+          echo "--- verify toolchain ---"
+          aarch64-none-elf-gcc --version | head -1 || { echo "::error::no compiler"; exit 1; }
+          ls -l "$DEVKITPRO/libnx/switch_rules" || { echo "::error::no switch_rules"; exit 1; }
+
+          echo "--- verify libs the link step needs ---"
+          for lib in libSDL2.a libEGL.a libGLESv2.a libglapi.a libavformat.a libz.a; do
+            found=$(find "$DEVKITPRO" -name "$lib" 2>/dev/null | head -1)
+            if [ -n "$found" ]; then echo "OK   $lib -> $found"; else echo "MISS $lib"; fi
+          done
 
       - name: Build
         run: |

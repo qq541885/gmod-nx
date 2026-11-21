@@ -292,6 +292,70 @@ static Elf64_Xword so_dynamic_tag(so_module *mod, Elf64_Sxword tag) {
   return 0;
 }
 
+// lowest PT_LOAD vaddr; mod->phdr is the pristine (pre-rebase) copy
+static Elf64_Addr so_min_load_vaddr(so_module *mod) {
+  Elf64_Addr min = (Elf64_Addr)~0ULL;
+  for (int i = 0; i < mod->phnum; i++)
+    if (mod->phdr[i].p_type == PT_LOAD && mod->phdr[i].p_vaddr < min)
+      min = mod->phdr[i].p_vaddr;
+  return (min == (Elf64_Addr)~0ULL) ? 0 : min;
+}
+
+// Walk one RELA table located at a link-time vaddr. Diagnostics instead of
+// dying: one malformed entry must not cost the whole module.
+static void so_apply_rela(so_module *mod, Elf64_Addr vaddr, Elf64_Xword size,
+                          Elf64_Xword ent, Elf64_Addr min_vaddr) {
+  if (!vaddr || !size) return;
+  if (ent < sizeof(Elf64_Rela)) ent = sizeof(Elf64_Rela);
+  if (vaddr < min_vaddr) {
+    debugPrintf("%s: reloc vaddr %llx below min %llx\n",
+                mod->name, (unsigned long long)vaddr, (unsigned long long)min_vaddr);
+    return;
+  }
+  const size_t off = (size_t)(vaddr - min_vaddr);
+  if (off >= mod->load_size || size > mod->load_size - off) {
+    debugPrintf("%s: reloc table out of range off=%zu size=%llu load=%zu\n",
+                mod->name, off, (unsigned long long)size, mod->load_size);
+    return;
+  }
+  Elf64_Rela *rels = (Elf64_Rela *)((uintptr_t)mod->load_base + off);
+  const int nrel = (int)(size / ent);
+  int bad_off = 0, bad_sym = 0, bad_type = 0;
+  for (int j = 0; j < nrel; j++) {
+    if (rels[j].r_offset >= mod->load_size) { bad_off++; continue; }
+    const unsigned symidx = (unsigned)ELF64_R_SYM(rels[j].r_info);
+    if (symidx >= (unsigned)mod->num_syms) { bad_sym++; continue; }
+    uintptr_t *ptr = (uintptr_t *)((uintptr_t)mod->load_base + rels[j].r_offset);
+    Elf64_Sym *sym = &mod->syms[symidx];
+    const int type = ELF64_R_TYPE(rels[j].r_info);
+    switch (type) {
+      case R_AARCH64_ABS64:
+        if (sym->st_shndx == SHN_UNDEF) *ptr = rels[j].r_addend;
+        else *ptr = (uintptr_t)mod->load_virtbase + sym->st_value + rels[j].r_addend;
+        break;
+      case R_AARCH64_RELATIVE:
+        *ptr = (uintptr_t)mod->load_virtbase + rels[j].r_addend;
+        break;
+      case R_AARCH64_GLOB_DAT:
+      case R_AARCH64_JUMP_SLOT:
+        if (sym->st_shndx != SHN_UNDEF)
+          *ptr = (uintptr_t)mod->load_virtbase + sym->st_value + rels[j].r_addend;
+        break;
+      case R_AARCH64_NONE:
+        break;
+      default:
+        bad_type++;
+        if (bad_type <= 4)
+          debugPrintf("%s: reloc %d/%d unknown type %x (offset %llx)\n",
+                      mod->name, j, nrel, type, (unsigned long long)rels[j].r_offset);
+        break;
+    }
+  }
+  if (bad_off || bad_sym || bad_type)
+    debugPrintf("%s: reloc %d entries, skipped %d off / %d sym / %d type\n",
+                mod->name, nrel, bad_off, bad_sym, bad_type);
+}
+
 // RELR/ANDROID_RELR packed relative relocations;
 // each location gets the load base added to the value stored in the file
 static void so_process_relr(so_module *mod, const Elf64_Xword *relr, size_t relrsz) {
@@ -316,83 +380,36 @@ static void so_process_relr(so_module *mod, const Elf64_Xword *relr, size_t relr
 }
 
 int so_relocate(so_module *mod) {
-  for (int i = 0; i < mod->elf_hdr->e_shnum; i++) {
-    char *sh_name = mod->shstrtab + mod->sec_hdr[i].sh_name;
-    if (strcmp(sh_name, ".rela.dyn") == 0 || strcmp(sh_name, ".rela.plt") == 0) {
-      /* A section whose sh_addr is 0 or which extends past load_size is not
-       * part of the mapped image. Dereferencing it reads the ELF header (or
-       * memory past the mapping) and produces nonsense relocation types, so
-       * validate before walking the table. */
-      /* GDroid's modules do not always use a 24-byte stride for .rela.dyn;
-       * honour sh_entsize when present and only fall back to sizeof(Rela).
-       * Demanding an exact multiple of sizeof(Rela) silently discarded every
-       * relocation section in the whole module set. */
-      const size_t rel_off = (size_t)mod->sec_hdr[i].sh_addr;
-      const size_t rel_len = (size_t)mod->sec_hdr[i].sh_size;
-      if (rel_off == 0 || rel_len == 0 ||
-          rel_off > mod->load_size || rel_len > mod->load_size - rel_off) {
-        debugPrintf("so_relocate: %s skip bad reloc section %s off=%zu len=%zu load=%zu\n",
-                    mod->name, sh_name, rel_off, rel_len, mod->load_size);
-        continue;
-      }
-      size_t rel_ent = (size_t)mod->sec_hdr[i].sh_entsize;
-      if (rel_ent != sizeof(Elf64_Rela)) {
-        debugPrintf("so_relocate: %s %s entsize=%zu size=%zu load=%zu\n",
-                    mod->name, sh_name, rel_ent, rel_len, mod->load_size);
-        if (rel_ent == 0 || rel_ent < sizeof(Elf64_Rela)) rel_ent = sizeof(Elf64_Rela);
-      }
-      Elf64_Rela *rels = (Elf64_Rela *)((uintptr_t)mod->load_base + rel_off);
-      const int nrel = (int)(rel_len / rel_ent);
-      for (int j = 0; j < nrel; j++) {
-        if (rels[j].r_offset >= mod->load_size) {
-          debugPrintf("%s: r_offset out of range (%zu >= %zu) entry %d\n",
-                      mod->name, (size_t)rels[j].r_offset, mod->load_size, j);
-          continue;
-        }
-        const unsigned symidx = (unsigned)ELF64_R_SYM(rels[j].r_info);
-        if (symidx >= (unsigned)mod->num_syms) {
-          debugPrintf("%s: symbol index out of range (%u >= %d) entry %d\n",
-                      mod->name, symidx, mod->num_syms, j);
-          continue;
-        }
-        uintptr_t *ptr = (uintptr_t *)((uintptr_t)mod->load_base + rels[j].r_offset);
-        Elf64_Sym *sym = &mod->syms[symidx];
+  const Elf64_Addr min_vaddr = so_min_load_vaddr(mod);
 
-        int type = ELF64_R_TYPE(rels[j].r_info);
-        switch (type) {
-          case R_AARCH64_ABS64:
-            if (sym->st_shndx == SHN_UNDEF) {
-              // Imported absolute relocations (notably RTTI/type_info vtable
-              // references) must be resolved after all modules are loaded.
-              *ptr = rels[j].r_addend;
-            } else {
-              *ptr = (uintptr_t)mod->load_virtbase + sym->st_value + rels[j].r_addend;
-            }
-            break;
+  /* Prefer the dynamic tags. The section headers in the GDroid module set are
+   * not trustworthy: .rela.dyn reports sh_entsize=1 and a sh_size far smaller
+   * than the real table, which yielded thousands of bogus r_offsets. Every
+   * real loader walks DT_RELA instead. */
+  const Elf64_Xword rela     = so_dynamic_tag(mod, DT_RELA);
+  const Elf64_Xword relasz   = so_dynamic_tag(mod, DT_RELASZ);
+  const Elf64_Xword relaent  = so_dynamic_tag(mod, DT_RELAENT);
+  const Elf64_Xword jmprel   = so_dynamic_tag(mod, DT_JMPREL);
+  const Elf64_Xword pltrelsz = so_dynamic_tag(mod, DT_PLTRELSZ);
 
-          case R_AARCH64_RELATIVE:
-            // sometimes the value of r_addend is also at *ptr
-            *ptr = (uintptr_t)mod->load_virtbase + rels[j].r_addend;
-            break;
-
-          case R_AARCH64_GLOB_DAT:
-          case R_AARCH64_JUMP_SLOT:
-          {
-            if (sym->st_shndx != SHN_UNDEF)
-              *ptr = (uintptr_t)mod->load_virtbase + sym->st_value + rels[j].r_addend;
-            break;
-          }
-
-          default:
-            fatal_error("Error: unknown relocation type %x\n\n"
-                        "module: %s\n"
-                        "section: %s (idx %d)  entry %d/%d",
-                        type, mod->name, sh_name, i, j, nrel);
-            break;
-        }
+  if (rela && relasz) {
+    debugPrintf("%s: DT_RELA at %llx, %llu bytes (min_vaddr %llx)\n", mod->name,
+                (unsigned long long)rela, (unsigned long long)relasz,
+                (unsigned long long)min_vaddr);
+    so_apply_rela(mod, rela, relasz, relaent, min_vaddr);
+  } else {
+    for (int i = 0; i < mod->elf_hdr->e_shnum; i++) {
+      const char *sh_name = mod->shstrtab + mod->sec_hdr[i].sh_name;
+      if (strcmp(sh_name, ".rela.dyn") == 0) {
+        debugPrintf("%s: no DT_RELA, using section .rela.dyn\n", mod->name);
+        so_apply_rela(mod, mod->sec_hdr[i].sh_addr, mod->sec_hdr[i].sh_size,
+                      mod->sec_hdr[i].sh_entsize, min_vaddr);
       }
     }
   }
+
+  if (jmprel && pltrelsz)
+    so_apply_rela(mod, jmprel, pltrelsz, relaent, min_vaddr);
 
   // packed relative relocations, if present
   Elf64_Xword relr_off = so_dynamic_tag(mod, DT_RELR);
@@ -401,8 +418,10 @@ int so_relocate(so_module *mod) {
     relr_off = so_dynamic_tag(mod, DT_ANDROID_RELR);
     relr_size = so_dynamic_tag(mod, DT_ANDROID_RELRSZ);
   }
-  if (relr_off && relr_size)
-    so_process_relr(mod, (const Elf64_Xword *)((uintptr_t)mod->load_base + relr_off), relr_size);
+  if (relr_off && relr_size) {
+    const size_t relr_delta = (size_t)(relr_off - min_vaddr);
+    so_process_relr(mod, (const Elf64_Xword *)((uintptr_t)mod->load_base + relr_delta), relr_size);
+  }
 
   return 0;
 }
@@ -451,79 +470,72 @@ static uintptr_t so_resolve_symbol(so_module *mod, DynLibFunction *funcs, int nu
   return 0;
 }
 
-int so_resolve(so_module *mod, DynLibFunction *funcs, int num_funcs, int taint_missing_imports) {
-  int missing = 0;
-  for (int i = 0; i < mod->elf_hdr->e_shnum; i++) {
-    char *sh_name = mod->shstrtab + mod->sec_hdr[i].sh_name;
-    if (strcmp(sh_name, ".rela.dyn") == 0 || strcmp(sh_name, ".rela.plt") == 0) {
-      /* A section whose sh_addr is 0 or which extends past load_size is not
-       * part of the mapped image. Dereferencing it reads the ELF header (or
-       * memory past the mapping) and produces nonsense relocation types, so
-       * validate before walking the table. */
-      /* GDroid's modules do not always use a 24-byte stride for .rela.dyn;
-       * honour sh_entsize when present and only fall back to sizeof(Rela).
-       * Demanding an exact multiple of sizeof(Rela) silently discarded every
-       * relocation section in the whole module set. */
-      const size_t rel_off = (size_t)mod->sec_hdr[i].sh_addr;
-      const size_t rel_len = (size_t)mod->sec_hdr[i].sh_size;
-      if (rel_off == 0 || rel_len == 0 ||
-          rel_off > mod->load_size || rel_len > mod->load_size - rel_off) {
-        debugPrintf("so_relocate: %s skip bad reloc section %s off=%zu len=%zu load=%zu\n",
-                    mod->name, sh_name, rel_off, rel_len, mod->load_size);
-        continue;
-      }
-      size_t rel_ent = (size_t)mod->sec_hdr[i].sh_entsize;
-      if (rel_ent != sizeof(Elf64_Rela)) {
-        debugPrintf("so_relocate: %s %s entsize=%zu size=%zu load=%zu\n",
-                    mod->name, sh_name, rel_ent, rel_len, mod->load_size);
-        if (rel_ent == 0 || rel_ent < sizeof(Elf64_Rela)) rel_ent = sizeof(Elf64_Rela);
-      }
-      Elf64_Rela *rels = (Elf64_Rela *)((uintptr_t)mod->load_base + rel_off);
-      const int nrel = (int)(rel_len / rel_ent);
-      for (int j = 0; j < nrel; j++) {
-        if (rels[j].r_offset >= mod->load_size) {
-          debugPrintf("%s: r_offset out of range (%zu >= %zu) entry %d\n",
-                      mod->name, (size_t)rels[j].r_offset, mod->load_size, j);
-          continue;
-        }
-        const unsigned symidx = (unsigned)ELF64_R_SYM(rels[j].r_info);
-        if (symidx >= (unsigned)mod->num_syms) {
-          debugPrintf("%s: symbol index out of range (%u >= %d) entry %d\n",
-                      mod->name, symidx, mod->num_syms, j);
-          continue;
-        }
-        uintptr_t *ptr = (uintptr_t *)((uintptr_t)mod->load_base + rels[j].r_offset);
-        Elf64_Sym *sym = &mod->syms[symidx];
-
-        int type = ELF64_R_TYPE(rels[j].r_info);
-        switch (type) {
-          case R_AARCH64_ABS64:
-          case R_AARCH64_GLOB_DAT:
-          case R_AARCH64_JUMP_SLOT:
-          {
-            if (sym->st_shndx == SHN_UNDEF) {
-              char *name = mod->dynstrtab + sym->st_name;
-              uintptr_t addr = so_resolve_symbol(mod, funcs, num_funcs, name);
-              if (addr) {
-                *ptr = addr + rels[j].r_addend;
-              } else {
-                missing++;
-                debugPrintf("%s: unresolved import: %s\n", mod->name, name);
-                // taint so an unresolved call crashes at an obvious address
-                if (taint_missing_imports)
-                  *ptr = rels[j].r_offset;
-              }
-            }
-
-            break;
-          }
-
-          default:
-            break;
-        }
-      }
+// Resolve UNDEF imports referenced by one RELA table at a link-time vaddr.
+static void so_resolve_table(so_module *mod, Elf64_Addr vaddr, Elf64_Xword size,
+                             Elf64_Xword ent, Elf64_Addr min_vaddr,
+                             DynLibFunction *funcs, int num_funcs,
+                             int taint_missing_imports, int *missing) {
+  if (!vaddr || !size) return;
+  if (ent < sizeof(Elf64_Rela)) ent = sizeof(Elf64_Rela);
+  if (vaddr < min_vaddr) return;
+  const size_t off = (size_t)(vaddr - min_vaddr);
+  if (off >= mod->load_size || size > mod->load_size - off) {
+    debugPrintf("%s: resolve table out of range off=%zu size=%llu\n",
+                mod->name, off, (unsigned long long)size);
+    return;
+  }
+  Elf64_Rela *rels = (Elf64_Rela *)((uintptr_t)mod->load_base + off);
+  const int nrel = (int)(size / ent);
+  for (int j = 0; j < nrel; j++) {
+    if (rels[j].r_offset >= mod->load_size) continue;
+    const unsigned symidx = (unsigned)ELF64_R_SYM(rels[j].r_info);
+    if (symidx >= (unsigned)mod->num_syms) continue;
+    const int type = ELF64_R_TYPE(rels[j].r_info);
+    if (type != R_AARCH64_ABS64 && type != R_AARCH64_GLOB_DAT &&
+        type != R_AARCH64_JUMP_SLOT)
+      continue;
+    Elf64_Sym *sym = &mod->syms[symidx];
+    if (sym->st_shndx != SHN_UNDEF) continue;
+    uintptr_t *ptr = (uintptr_t *)((uintptr_t)mod->load_base + rels[j].r_offset);
+    char *name = mod->dynstrtab + sym->st_name;
+    uintptr_t addr = so_resolve_symbol(mod, funcs, num_funcs, name);
+    if (addr) {
+      *ptr = addr + rels[j].r_addend;
+    } else {
+      (*missing)++;
+      debugPrintf("%s: unresolved import: %s\n", mod->name, name);
+      // taint so an unresolved call crashes at an obvious address
+      if (taint_missing_imports)
+        *ptr = rels[j].r_offset;
     }
   }
+}
+
+int so_resolve(so_module *mod, DynLibFunction *funcs, int num_funcs, int taint_missing_imports) {
+  int missing = 0;
+  const Elf64_Addr min_vaddr = so_min_load_vaddr(mod);
+
+  const Elf64_Xword rela     = so_dynamic_tag(mod, DT_RELA);
+  const Elf64_Xword relasz   = so_dynamic_tag(mod, DT_RELASZ);
+  const Elf64_Xword relaent  = so_dynamic_tag(mod, DT_RELAENT);
+  const Elf64_Xword jmprel   = so_dynamic_tag(mod, DT_JMPREL);
+  const Elf64_Xword pltrelsz = so_dynamic_tag(mod, DT_PLTRELSZ);
+
+  if (rela && relasz)
+    so_resolve_table(mod, rela, relasz, relaent, min_vaddr,
+                     funcs, num_funcs, taint_missing_imports, &missing);
+  else
+    for (int i = 0; i < mod->elf_hdr->e_shnum; i++) {
+      const char *sh_name = mod->shstrtab + mod->sec_hdr[i].sh_name;
+      if (strcmp(sh_name, ".rela.dyn") == 0)
+        so_resolve_table(mod, mod->sec_hdr[i].sh_addr, mod->sec_hdr[i].sh_size,
+                         mod->sec_hdr[i].sh_entsize, min_vaddr,
+                         funcs, num_funcs, taint_missing_imports, &missing);
+    }
+
+  if (jmprel && pltrelsz)
+    so_resolve_table(mod, jmprel, pltrelsz, relaent, min_vaddr,
+                     funcs, num_funcs, taint_missing_imports, &missing);
 
   if (missing)
     debugPrintf("%s: %d unresolved imports\n", mod->name, missing);

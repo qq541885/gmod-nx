@@ -119,6 +119,12 @@ void __libnx_initheap(void) {
   heap_so_base = (char *)addr + fake_heap_size;
   heap_so_base = (void *)ALIGN_MEM((uintptr_t)heap_so_base, 0x1000);
   heap_so_limit = (char *)addr + size - (char *)heap_so_base;
+
+  /* heap diag: without these numbers a malloc failure is undebuggable */
+  debugPrintf("heap diag: total=%zuMB available=%zuMB used=%zuMB\n",
+              size >> 20, mem_available >> 20, mem_used >> 20);
+  debugPrintf("heap diag: newlib heap=%zuMB  so pool=%zuMB\n",
+              fake_heap_size >> 20, so_size >> 20);
 }
 
 /* render at the real panel size so the engine's GL viewport fills switch-sdl2's
@@ -191,6 +197,8 @@ static void load_modules(void) {
   /* pass 1: load everything so cross-module resolution sees all exports */
   for (unsigned int i = 0; i < NUM_MODULES; i++) {
     snprintf(path, sizeof(path), "lib/%s", module_names[i]);
+    debugPrintf("loading %s\
+", path);
     const int res = so_load(&modules[i], path, base, remaining);
     if (res < 0)
       fatal_error("Could not load\n%s\n(so_load: %d)", path, res);

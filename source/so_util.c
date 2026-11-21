@@ -144,6 +144,7 @@ int so_load(so_module *mod, const char *filename, void *base, size_t max_size) {
 
   mod->so_base = malloc(mod->so_size);
   if (!mod->so_base) {
+    debugPrintf("so_load: %s malloc(%zu) failed -- temporary image\n", filename, mod->so_size);
     fclose(fd);
     return -2;
   }

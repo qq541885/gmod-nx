@@ -331,18 +331,28 @@ static size_t so_sleb128(const uint8_t **pp, const uint8_t *end) {
   *pp = p;
   return result;
 }
-
 // APS2 (DT_ANDROID_RELA / SHT_ANDROID_RELA) decoder.
-// 'APS2' followed by repeated groups of:
-//   sleb128 count
-//   sleb128 r_offset delta x count   (accumulated across groups)
-//   sleb128 r_info         x count   (full r_info: sym in the high bits, type in the low)
-//   sleb128 r_addend       x count
-//   pad to 4-byte alignment
-// Three streams, not four: there is no standalone type stream.
+//
+// Layout (per the Android linker and lld):
+//   'APS2'
+//   sleb128 total_relocation_count
+//   sleb128 initial r_offset
+//   repeated groups until the count is exhausted:
+//     sleb128 group_size
+//     sleb128 group_flags
+//     if (flags & 2) sleb128 shared r_offset delta
+//     if (flags & 1) sleb128 shared r_info
+//     if ((flags & 8) && (flags & 4)) sleb128 shared r_addend delta
+//     per relocation in the group:
+//       if !(flags & 2) sleb128 r_offset delta      (running)
+//       if !(flags & 1) sleb128 r_info delta        (running)
+//       if ((flags & 8) && !(flags & 4)) sleb128 r_addend delta (running)
+//
+// Flags: 1 GROUPED_BY_INFO, 2 GROUPED_BY_OFFSET_DELTA,
+//        4 GROUPED_BY_ADDEND, 8 GROUP_HAS_ADDEND.
 static void so_apply_android_rela(so_module *mod, Elf64_Addr vaddr, Elf64_Xword size,
                                   Elf64_Addr min_vaddr) {
-  if (!vaddr || size < 8) return;
+  if (!vaddr || size < 16) return;
   if (vaddr < min_vaddr) return;
   const size_t off = (size_t)(vaddr - min_vaddr);
   if (off >= mod->load_size || size > mod->load_size - off) {
@@ -357,37 +367,59 @@ static void so_apply_android_rela(so_module *mod, Elf64_Addr vaddr, Elf64_Xword 
     return;
   }
   const uint8_t *p = base + 4;
-  intptr_t cur_off = 0;
-  long applied = 0, skipped = 0, groups = 0;
-  while (p < end) {
-    const size_t count = so_sleb128(&p, end);
-    if (count == 0) break;
-    groups++;
-    if (count > (1u << 20)) {
-      debugPrintf("%s: APS2 implausible count %zu\n", mod->name, count);
-      break;
-    }
-    const uint8_t *o_off = p;
-    const uint8_t *q = p;
-    for (size_t i = 0; i < count; i++) so_sleb128(&q, end);
-    const uint8_t *o_info = q;
-    for (size_t i = 0; i < count; i++) so_sleb128(&q, end);
-    const uint8_t *o_add = q;
-    for (size_t i = 0; i < count; i++) so_sleb128(&q, end);
-    p = q;
-    while (((size_t)(p - base) & 3) && p < end) p++;
 
-    const uint8_t *s_off = o_off, *s_info = o_info, *s_add = o_add;
-    for (size_t i = 0; i < count; i++) {
-      cur_off += (intptr_t)so_sleb128(&s_off, end);
-      const size_t info  = so_sleb128(&s_info, end);
-      const intptr_t add = (intptr_t)so_sleb128(&s_add, end);
+  const size_t total = so_sleb128(&p, end);
+  intptr_t cur_off = (intptr_t)so_sleb128(&p, end);   // initial r_offset
+  uint64_t running_info = 0;
+  intptr_t running_add = 0;
+
+  long applied = 0, skipped = 0, groups = 0;
+  size_t done = 0;
+
+  while (done < total && p < end) {
+    const size_t group_size = so_sleb128(&p, end);
+    if (group_size == 0) break;
+    const size_t flags = so_sleb128(&p, end);
+    groups++;
+    if (groups > 100000) break;
+
+    intptr_t shared_off = 0;
+    uint64_t shared_info = 0;
+    intptr_t shared_add = 0;
+    if (flags & 2) shared_off  = (intptr_t)so_sleb128(&p, end);
+    if (flags & 1) shared_info = (uint64_t)so_sleb128(&p, end);
+    if ((flags & 8) && (flags & 4)) shared_add = (intptr_t)so_sleb128(&p, end);
+
+    for (size_t i = 0; i < group_size && done < total; i++, done++) {
+      if (flags & 2) {
+        cur_off += shared_off;
+      } else {
+        cur_off += (intptr_t)so_sleb128(&p, end);
+      }
+
+      uint64_t info;
+      if (flags & 1) {
+        info = shared_info;
+      } else {
+        running_info += so_sleb128(&p, end);
+        info = running_info;
+      }
+
+      intptr_t add = 0;
+      if (flags & 8) {
+        if (flags & 4) running_add += shared_add;
+        else           running_add += (intptr_t)so_sleb128(&p, end);
+        add = running_add;
+      }
+
       const unsigned sym  = (unsigned)ELF64_R_SYM(info);
       const unsigned type = (unsigned)ELF64_R_TYPE(info);
+
       if (cur_off < (intptr_t)min_vaddr) { skipped++; continue; }
       const size_t slot_off = (size_t)(cur_off - (intptr_t)min_vaddr);
       if (slot_off + 8 > mod->load_size) { skipped++; continue; }
       uintptr_t *slot = (uintptr_t *)((uintptr_t)mod->load_base + slot_off);
+
       switch (type) {
         case R_AARCH64_RELATIVE:
           *slot = (uintptr_t)mod->load_virtbase + add;
@@ -407,7 +439,7 @@ static void so_apply_android_rela(so_module *mod, Elf64_Addr vaddr, Elf64_Xword 
           applied++;
           break;
         default:
-          if (skipped < 5)
+          if (skipped < 4)
             debugPrintf("%s: APS2 unknown type %u at %llx\n",
                         mod->name, type, (unsigned long long)cur_off);
           skipped++;
@@ -415,8 +447,8 @@ static void so_apply_android_rela(so_module *mod, Elf64_Addr vaddr, Elf64_Xword 
       }
     }
   }
-  debugPrintf("%s: APS2 %ld groups, %ld applied, %ld skipped\n",
-              mod->name, groups, applied, skipped);
+  debugPrintf("%s: APS2 total=%zu %ld groups, %ld applied, %ld skipped\n",
+              mod->name, total, groups, applied, skipped);
 }
 
 // Walk one RELA table located at a link-time vaddr. Diagnostics instead of

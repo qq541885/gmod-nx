@@ -335,8 +335,19 @@ int so_relocate(so_module *mod) {
       Elf64_Rela *rels = (Elf64_Rela *)((uintptr_t)mod->load_base + rel_off);
       const int nrel = (int)(rel_len / sizeof(Elf64_Rela));
       for (int j = 0; j < nrel; j++) {
+        if (rels[j].r_offset >= mod->load_size) {
+          debugPrintf("%s: r_offset out of range (%zu >= %zu) entry %d\n",
+                      mod->name, (size_t)rels[j].r_offset, mod->load_size, j);
+          continue;
+        }
+        const unsigned symidx = (unsigned)ELF64_R_SYM(rels[j].r_info);
+        if (symidx >= (unsigned)mod->num_syms) {
+          debugPrintf("%s: symbol index out of range (%u >= %d) entry %d\n",
+                      mod->name, symidx, mod->num_syms, j);
+          continue;
+        }
         uintptr_t *ptr = (uintptr_t *)((uintptr_t)mod->load_base + rels[j].r_offset);
-        Elf64_Sym *sym = &mod->syms[ELF64_R_SYM(rels[j].r_info)];
+        Elf64_Sym *sym = &mod->syms[symidx];
 
         int type = ELF64_R_TYPE(rels[j].r_info);
         switch (type) {
@@ -364,10 +375,10 @@ int so_relocate(so_module *mod) {
           }
 
           default:
-            fatal_error("Error: unknown relocation type %x
-
-module: %s
-section: %s (idx %d)  entry %d/%d", type, mod->name, sh_name, i, j, nrel);
+            fatal_error("Error: unknown relocation type %x\n\n"
+                        "module: %s\n"
+                        "section: %s (idx %d)  entry %d/%d",
+                        type, mod->name, sh_name, i, j, nrel);
             break;
         }
       }
@@ -452,8 +463,19 @@ int so_resolve(so_module *mod, DynLibFunction *funcs, int num_funcs, int taint_m
       Elf64_Rela *rels = (Elf64_Rela *)((uintptr_t)mod->load_base + rel_off);
       const int nrel = (int)(rel_len / sizeof(Elf64_Rela));
       for (int j = 0; j < nrel; j++) {
+        if (rels[j].r_offset >= mod->load_size) {
+          debugPrintf("%s: r_offset out of range (%zu >= %zu) entry %d\n",
+                      mod->name, (size_t)rels[j].r_offset, mod->load_size, j);
+          continue;
+        }
+        const unsigned symidx = (unsigned)ELF64_R_SYM(rels[j].r_info);
+        if (symidx >= (unsigned)mod->num_syms) {
+          debugPrintf("%s: symbol index out of range (%u >= %d) entry %d\n",
+                      mod->name, symidx, mod->num_syms, j);
+          continue;
+        }
         uintptr_t *ptr = (uintptr_t *)((uintptr_t)mod->load_base + rels[j].r_offset);
-        Elf64_Sym *sym = &mod->syms[ELF64_R_SYM(rels[j].r_info)];
+        Elf64_Sym *sym = &mod->syms[symidx];
 
         int type = ELF64_R_TYPE(rels[j].r_info);
         switch (type) {

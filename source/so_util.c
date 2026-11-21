@@ -17,6 +17,7 @@
 #include <string.h>
 #include <malloc.h>
 #include <elf.h>
+#include <sys/stat.h>
 
 #include "config.h"
 #include "so_util.h"

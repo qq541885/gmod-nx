@@ -358,70 +358,83 @@ static void so_apply_rela(so_module *mod, Elf64_Addr vaddr, Elf64_Xword size,
 
 // RELR/ANDROID_RELR packed relative relocations;
 // each location gets the load base added to the value stored in the file
-static void so_process_relr(so_module *mod, const Elf64_Xword *relr, size_t relrsz) {
+static void so_process_relr(so_module *mod, const Elf64_Xword *relr, size_t relrsz,
+                            Elf64_Addr min_vaddr) {
   uintptr_t where = 0;
+  int applied = 0, skipped = 0;
   const size_t count = relrsz / sizeof(Elf64_Xword);
   for (size_t i = 0; i < count; i++) {
     const Elf64_Xword entry = relr[i];
     if ((entry & 1) == 0) {
       // even entry: address of the next relocation
       where = (uintptr_t)entry;
-      *(uint64_t *)((uintptr_t)mod->load_base + where) += (uint64_t)mod->load_virtbase;
+      if (where >= min_vaddr && (size_t)(where - min_vaddr) + 8 <= mod->load_size) {
+        *(uint64_t *)((uintptr_t)mod->load_base + (where - min_vaddr)) += (uint64_t)mod->load_virtbase;
+        applied++;
+      } else skipped++;
       where += 8;
     } else {
       // odd entry: bitmap for the next 63 words
       for (int bit = 1; bit < 64; bit++) {
-        if (entry & (1ull << bit))
-          *(uint64_t *)((uintptr_t)mod->load_base + where + (bit - 1) * 8) += (uint64_t)mod->load_virtbase;
+        if (entry & (1ull << bit)) {
+          const uintptr_t off = where + (uintptr_t)(bit - 1) * 8;
+          if (off >= min_vaddr && (size_t)(off - min_vaddr) + 8 <= mod->load_size) {
+            *(uint64_t *)((uintptr_t)mod->load_base + (off - min_vaddr)) += (uint64_t)mod->load_virtbase;
+            applied++;
+          } else skipped++;
+        }
       }
       where += 63 * 8;
     }
   }
+  debugPrintf("%s: RELR %zu entries -> %d applied, %d skipped\n",
+              mod->name, count, applied, skipped);
 }
 
 int so_relocate(so_module *mod) {
   const Elf64_Addr min_vaddr = so_min_load_vaddr(mod);
 
-  /* Prefer the dynamic tags. The section headers in the GDroid module set are
-   * not trustworthy: .rela.dyn reports sh_entsize=1 and a sh_size far smaller
-   * than the real table, which yielded thousands of bogus r_offsets. Every
-   * real loader walks DT_RELA instead. */
   const Elf64_Xword rela     = so_dynamic_tag(mod, DT_RELA);
   const Elf64_Xword relasz   = so_dynamic_tag(mod, DT_RELASZ);
   const Elf64_Xword relaent  = so_dynamic_tag(mod, DT_RELAENT);
   const Elf64_Xword jmprel   = so_dynamic_tag(mod, DT_JMPREL);
   const Elf64_Xword pltrelsz = so_dynamic_tag(mod, DT_PLTRELSZ);
 
-  if (rela && relasz) {
-    debugPrintf("%s: DT_RELA at %llx, %llu bytes (min_vaddr %llx)\n", mod->name,
-                (unsigned long long)rela, (unsigned long long)relasz,
-                (unsigned long long)min_vaddr);
+  Elf64_Xword relr_off  = so_dynamic_tag(mod, DT_RELR);
+  Elf64_Xword relr_size = so_dynamic_tag(mod, DT_RELRSZ);
+  if (!relr_off) {
+    relr_off  = so_dynamic_tag(mod, DT_ANDROID_RELR);
+    relr_size = so_dynamic_tag(mod, DT_ANDROID_RELRSZ);
+  }
+
+  debugPrintf("%s: tags RELA=%llx/%llu RELR=%llx/%llu JMPREL=%llx/%llu min_vaddr=%llx\n",
+              mod->name,
+              (unsigned long long)rela, (unsigned long long)relasz,
+              (unsigned long long)relr_off, (unsigned long long)relr_size,
+              (unsigned long long)jmprel, (unsigned long long)pltrelsz,
+              (unsigned long long)min_vaddr);
+
+  /* Section headers in this module set are unreliable: .rela.dyn reports
+   * sh_entsize=1 and a sh_size far smaller than the real table, so every
+   * entry read through them had an out-of-range r_offset. Nothing here
+   * consults them any more; everything comes from the dynamic section, which
+   * is what any real loader does. */
+  if (rela && relasz)
     so_apply_rela(mod, rela, relasz, relaent, min_vaddr);
-  } else {
-    for (int i = 0; i < mod->elf_hdr->e_shnum; i++) {
-      const char *sh_name = mod->shstrtab + mod->sec_hdr[i].sh_name;
-      if (strcmp(sh_name, ".rela.dyn") == 0) {
-        debugPrintf("%s: no DT_RELA, using section .rela.dyn\n", mod->name);
-        so_apply_rela(mod, mod->sec_hdr[i].sh_addr, mod->sec_hdr[i].sh_size,
-                      mod->sec_hdr[i].sh_entsize, min_vaddr);
-      }
-    }
+
+  /* RELATIVE relocations first, then symbol slots land on top of them. */
+  if (relr_off && relr_size) {
+    if (relr_off >= min_vaddr && (size_t)(relr_off - min_vaddr) < mod->load_size)
+      so_process_relr(mod,
+                      (const Elf64_Xword *)((uintptr_t)mod->load_base + (relr_off - min_vaddr)),
+                      (size_t)relr_size, min_vaddr);
+    else
+      debugPrintf("%s: RELR offset %llx outside image\n",
+                  mod->name, (unsigned long long)relr_off);
   }
 
   if (jmprel && pltrelsz)
     so_apply_rela(mod, jmprel, pltrelsz, relaent, min_vaddr);
-
-  // packed relative relocations, if present
-  Elf64_Xword relr_off = so_dynamic_tag(mod, DT_RELR);
-  Elf64_Xword relr_size = so_dynamic_tag(mod, DT_RELRSZ);
-  if (!relr_off) {
-    relr_off = so_dynamic_tag(mod, DT_ANDROID_RELR);
-    relr_size = so_dynamic_tag(mod, DT_ANDROID_RELRSZ);
-  }
-  if (relr_off && relr_size) {
-    const size_t relr_delta = (size_t)(relr_off - min_vaddr);
-    so_process_relr(mod, (const Elf64_Xword *)((uintptr_t)mod->load_base + relr_delta), relr_size);
-  }
 
   return 0;
 }
@@ -521,17 +534,12 @@ int so_resolve(so_module *mod, DynLibFunction *funcs, int num_funcs, int taint_m
   const Elf64_Xword jmprel   = so_dynamic_tag(mod, DT_JMPREL);
   const Elf64_Xword pltrelsz = so_dynamic_tag(mod, DT_PLTRELSZ);
 
+  /* Same rule as so_relocate: the section headers are not trustworthy, so the
+   * section-header fallback is gone. Symbol slots live in DT_RELA and
+   * DT_JMPREL; RELATIVE entries carry no symbols and need no resolving. */
   if (rela && relasz)
     so_resolve_table(mod, rela, relasz, relaent, min_vaddr,
                      funcs, num_funcs, taint_missing_imports, &missing);
-  else
-    for (int i = 0; i < mod->elf_hdr->e_shnum; i++) {
-      const char *sh_name = mod->shstrtab + mod->sec_hdr[i].sh_name;
-      if (strcmp(sh_name, ".rela.dyn") == 0)
-        so_resolve_table(mod, mod->sec_hdr[i].sh_addr, mod->sec_hdr[i].sh_size,
-                         mod->sec_hdr[i].sh_entsize, min_vaddr,
-                         funcs, num_funcs, taint_missing_imports, &missing);
-    }
 
   if (jmprel && pltrelsz)
     so_resolve_table(mod, jmprel, pltrelsz, relaent, min_vaddr,

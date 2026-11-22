@@ -726,8 +726,17 @@ int so_resolve(so_module *mod, DynLibFunction *funcs, int num_funcs, int taint_m
 void so_execute_init_array(so_module *mod) {
   // uses the location captured at load time: safe to run after so_free_temp
   for (int i = 0; i < mod->num_init; i++) {
-    if (mod->init_array[i])
-      mod->init_array[i]();
+    void (*fn)(void) = mod->init_array[i];
+    if (!fn) {
+      debugPrintf("  ctor %d/%d null\n", i + 1, mod->num_init);
+      continue;
+    }
+    /* Log before the call. debugPrintf does fopen/fclose per line, so this
+     * reaches the SD card even if the constructor never returns; the missing
+     * "leave" line then pins the crash to this exact constructor. */
+    debugPrintf("  ctor %d/%d enter %p\n", i + 1, mod->num_init, (void *)fn);
+    fn();
+    debugPrintf("  ctor %d/%d leave\n", i + 1, mod->num_init);
   }
 }
 

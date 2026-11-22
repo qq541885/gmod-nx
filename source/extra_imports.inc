@@ -547,3 +547,9 @@
   /* Android-only: no switch-sdl2 equivalent, NULL makes callers fall back */
   { "SDL_AndroidGetJNIEnv",     (uintptr_t)&gmod_android_get_jnienv },
   { "SDL_AndroidGetActivity",   (uintptr_t)&gmod_android_get_activity },
+  /* ---- SDL2 symbols libinputsystem.so still needs ---- */
+  { "SDL_StopTextInput",        (uintptr_t)&SDL_StopTextInput },
+  { "SDL_GetKeyboardFocus",     (uintptr_t)&SDL_GetKeyboardFocus },
+  { "SDL_GetMouseFocus",        (uintptr_t)&SDL_GetMouseFocus },
+  { "SDL_SetTextInputRect",     (uintptr_t)&SDL_SetTextInputRect },
+  { "SDL_GetTicks",             (uintptr_t)&SDL_GetTicks },

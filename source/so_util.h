@@ -62,6 +62,8 @@ int so_load(so_module *mod, const char *filename, void *base, size_t max_size);
 int so_relocate(so_module *mod);
 int so_resolve(so_module *mod, DynLibFunction *funcs, int num_funcs, int taint_missing_imports);
 void so_execute_init_array(so_module *mod);
+// spec: "libvstdlib.so:4,libtier0.so:2"  -- 1-based ctor index, * = all
+void so_set_skip_ctors(const char *spec);
 // pre-finalize only: address inside the RW mirror, for hooking/patching
 uintptr_t so_find_addr(so_module *mod, const char *symbol);
 // pre-finalize only: also searches the full, non-dynamic symbol table and

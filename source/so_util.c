@@ -723,10 +723,51 @@ int so_resolve(so_module *mod, DynLibFunction *funcs, int num_funcs, int taint_m
   return 0;
 }
 
+/* ---- constructor skip list -------------------------------------------
+ * Some modules in the GDroid set carry init_array entries that are member
+ * functions (they read x0 as `this`), so calling them through void(*)(void)
+ * dereferences a garbage pointer. The list lets a specific constructor be
+ * skipped so the rest of the load can be observed; it is a diagnostic knob,
+ * not a fix.
+ * spec: "libvstdlib.so:4"   or   "libvstdlib.so:*"   or several, comma separated
+ */
+static char g_skip_spec[512];
+
+void so_set_skip_ctors(const char *spec) {
+  snprintf(g_skip_spec, sizeof(g_skip_spec), "%s", spec ? spec : "");
+}
+
+static int so_ctor_is_skipped(const char *modname, int idx1based) {
+  if (!g_skip_spec[0]) return 0;
+  const size_t ml = strlen(modname);
+  const char *p = g_skip_spec;
+  while (*p) {
+    while (*p == ' ' || *p == ',') p++;
+    if (!*p) break;
+    const char *colon = strchr(p, ':');
+    if (!colon) break;
+    const size_t nl = (size_t)(colon - p);
+    if (nl == ml && strncmp(p, modname, nl) == 0) {
+      const char *v = colon + 1;
+      if (*v == '*') return 1;
+      const int n = atoi(v);
+      if (n == idx1based) return 1;
+    }
+    const char *comma = strchr(colon, ',');
+    if (!comma) break;
+    p = comma + 1;
+  }
+  return 0;
+}
+
 void so_execute_init_array(so_module *mod) {
   // uses the location captured at load time: safe to run after so_free_temp
   for (int i = 0; i < mod->num_init; i++) {
     void (*fn)(void) = mod->init_array[i];
+    if (so_ctor_is_skipped(mod->name, i + 1)) {
+      debugPrintf("  ctor %d/%d SKIPPED by config\n", i + 1, mod->num_init);
+      continue;
+    }
     if (!fn) {
       debugPrintf("  ctor %d/%d null\n", i + 1, mod->num_init);
       continue;

@@ -43,6 +43,7 @@ typedef struct {
   int gyro_space;     /* 0 local, 1 world, 2 player (see gyro.h) */
   int gyro_tighten;   /* anti-drift taper near zero */
   int gyro_accel;     /* speed-based acceleration multiplier */
+  char skip_ctors[256]; /* diag: "module.so:N" constructor indices to skip */
 } Config;
 
 extern Config config;

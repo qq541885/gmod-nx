@@ -447,6 +447,9 @@ int main(void) {
   proc_files_init(config.install_root);
 
   gmod_stdio_init();
+  so_set_skip_ctors(config.skip_ctors);
+  if (config.skip_ctors[0])
+    debugPrintf("skip_ctors: %s\n", config.skip_ctors);
   load_modules();
 
   so_module *launcher = so_find_module("liblauncher.so");

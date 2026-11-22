@@ -29,7 +29,8 @@
   CONFIG_VAR_INT(gyro_invert_y); \
   CONFIG_VAR_INT(gyro_space); \
   CONFIG_VAR_INT(gyro_tighten); \
-  CONFIG_VAR_INT(gyro_accel);
+  CONFIG_VAR_INT(gyro_accel); \
+  CONFIG_VAR_STR(skip_ctors);
 
 Config config;
 
@@ -115,6 +116,7 @@ int read_config(const char *file) {
   config.gyro_space = 0;
   config.gyro_tighten = 0;
   config.gyro_accel = 0;
+  strlcpy_(config.skip_ctors, "", sizeof(config.skip_ctors));
 
   FILE *f = fopen(file, "r");
   if (f == NULL)

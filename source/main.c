@@ -425,52 +425,34 @@ static void start_clock_thread(void) {
 #include <signal.h>
 #include <unistd.h>
 
-static void gmod_crash_handler(int sig, siginfo_t *info, void *ctx) {
-  ucontext_t *uc = (ucontext_t *)ctx;
-  char buf[512];
-  int n;
+/* devkitPro's bare-metal newlib has no ucontext_t/si_addr, so the handler
+ * cannot recover the faulting PC. It still reports the signal and the
+ * current SP/LR via inline asm, which together with the "ctor N enter"
+ * trace is enough to pin the fault to one constructor. */
+static void gmod_crash_handler(int sig) {
+  uintptr_t sp = 0, lr = 0, fp = 0;
+  __asm__ volatile("mov %0, sp" : "=r"(sp));
+  __asm__ volatile("mov %0, x30" : "=r"(lr));
+  __asm__ volatile("mov %0, x29" : "=r"(fp));
 
-  n = snprintf(buf, sizeof(buf),
-               "\n=== CRASH sig=%d fault=%p err=0x%x ===\n"
-               "PC =%p  LR =%p  SP =%p\n",
-               sig, info ? info->si_addr : NULL,
-               info ? info->si_code : 0,
-               (void *)uc->uc_mcontext.pc,
-               (void *)uc->uc_mcontext.regs[30],
-               (void *)uc->uc_mcontext.sp);
-  if (n > 0) { ssize_t w = write(1, buf, (size_t)n); (void)w; }
-  debugPrintf("%s", buf);
+  debugPrintf("\n=== CRASH sig=%d (%s) ===\n", sig,
+              sig == SIGSEGV ? "SIGSEGV" :
+              sig == SIGBUS  ? "SIGBUS"  :
+              sig == SIGILL  ? "SIGILL"  :
+              sig == SIGFPE  ? "SIGFPE"  : "SIGABRT");
+  debugPrintf("SP=%p  LR=%p  FP=%p\n", (void *)sp, (void *)lr, (void *)fp);
 
-  for (int i = 0; i < 29; i += 4) {
-    n = snprintf(buf, sizeof(buf),
-                 "x%-2d=%016llx x%-2d=%016llx x%-2d=%016llx x%-2d=%016llx\n",
-                 i,   (unsigned long long)uc->uc_mcontext.regs[i],
-                 i+1, (unsigned long long)uc->uc_mcontext.regs[i+1],
-                 i+2, (unsigned long long)uc->uc_mcontext.regs[i+2],
-                 i+3, (unsigned long long)uc->uc_mcontext.regs[i+3]);
-    if (n > 0) { ssize_t w = write(1, buf, (size_t)n); (void)w; }
-    debugPrintf("%s", buf);
+  /* 沿帧指针走一条回溯链，遇到不可读地址就停 */
+  uintptr_t f = fp;
+  for (int i = 0; i < 16 && f > 0x1000 && f < 0x00007fffffffe000ULL; i++) {
+    uintptr_t *frame = (uintptr_t *)f;
+    uintptr_t next = frame[0];
+    uintptr_t ret  = frame[1];
+    debugPrintf("  #%02d fp=%p ret=%p\n", i, (void *)f, (void *)ret);
+    if (next <= f) break;
+    f = next;
   }
-
-  /* 打印栈上的返回地址，便于人工回溯 */
-  uintptr_t *sp = (uintptr_t *)uc->uc_mcontext.sp;
-  n = snprintf(buf, sizeof(buf), "--- stack ---\n");
-  if (n > 0) { ssize_t w = write(1, buf, (size_t)n); (void)w; }
-  for (int i = 0; i < 32; i++) {
-    uintptr_t v = 0;
-    /* 只读用户态地址，避免二次崩溃 */
-    if ((uintptr_t)(sp + i) > 0x1000 && (uintptr_t)(sp + i) < 0x00007fffffffe000ULL)
-      v = sp[i];
-    n = snprintf(buf, sizeof(buf), "  sp+%03x: %016llx\n", i * 8,
-                 (unsigned long long)v);
-    if (n > 0) { ssize_t w = write(1, buf, (size_t)n); (void)w; }
-    debugPrintf("%s", buf);
-  }
-
-  n = snprintf(buf, sizeof(buf), "=== END CRASH ===\n");
-  if (n > 0) { ssize_t w = write(1, buf, (size_t)n); (void)w; }
-  debugPrintf("%s", buf);
-
+  debugPrintf("=== END CRASH ===\n");
   _exit(128 + sig);
 }
 
@@ -478,19 +460,15 @@ static int crash_handler_installed = 0;
 
 static void gmod_install_crash_handler(void) {
   if (crash_handler_installed) return;
-  struct sigaction sa;
-  memset(&sa, 0, sizeof(sa));
-  sa.sa_sigaction = gmod_crash_handler;
-  sa.sa_flags = SA_SIGINFO | SA_ONSTACK;
-  sigemptyset(&sa.sa_mask);
-  sigaction(SIGSEGV, &sa, NULL);
-  sigaction(SIGBUS,  &sa, NULL);
-  sigaction(SIGILL,  &sa, NULL);
-  sigaction(SIGFPE,  &sa, NULL);
-  sigaction(SIGABRT, &sa, NULL);
+  signal(SIGSEGV, gmod_crash_handler);
+  signal(SIGBUS,  gmod_crash_handler);
+  signal(SIGILL,  gmod_crash_handler);
+  signal(SIGFPE,  gmod_crash_handler);
+  signal(SIGABRT, gmod_crash_handler);
   crash_handler_installed = 1;
   debugPrintf("crash handler installed (SEGV/BUS/ILL/FPE/ABRT)\n");
 }
+
 int main(void) {
   gmod_install_crash_handler();
   saltynx_start();

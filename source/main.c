@@ -416,7 +416,83 @@ static void start_clock_thread(void) {
   pthread_attr_destroy(&at);
 }
 
+
+/* ------------------------------------------------------------------ */
+/* Crash dump: a SIGSEGV here means some module dereferenced a bad      */
+/* pointer; without PC/LR we can only guess which. Dump the fault      */
+/* address, PC, LR, SP and the general registers so one run is enough. */
+/* ------------------------------------------------------------------ */
+#include <signal.h>
+#include <unistd.h>
+
+static void gmod_crash_handler(int sig, siginfo_t *info, void *ctx) {
+  ucontext_t *uc = (ucontext_t *)ctx;
+  char buf[512];
+  int n;
+
+  n = snprintf(buf, sizeof(buf),
+               "\n=== CRASH sig=%d fault=%p err=0x%x ===\n"
+               "PC =%p  LR =%p  SP =%p\n",
+               sig, info ? info->si_addr : NULL,
+               info ? info->si_code : 0,
+               (void *)uc->uc_mcontext.pc,
+               (void *)uc->uc_mcontext.regs[30],
+               (void *)uc->uc_mcontext.sp);
+  if (n > 0) { ssize_t w = write(1, buf, (size_t)n); (void)w; }
+  debugPrintf("%s", buf);
+
+  for (int i = 0; i < 29; i += 4) {
+    n = snprintf(buf, sizeof(buf),
+                 "x%-2d=%016llx x%-2d=%016llx x%-2d=%016llx x%-2d=%016llx\n",
+                 i,   (unsigned long long)uc->uc_mcontext.regs[i],
+                 i+1, (unsigned long long)uc->uc_mcontext.regs[i+1],
+                 i+2, (unsigned long long)uc->uc_mcontext.regs[i+2],
+                 i+3, (unsigned long long)uc->uc_mcontext.regs[i+3]);
+    if (n > 0) { ssize_t w = write(1, buf, (size_t)n); (void)w; }
+    debugPrintf("%s", buf);
+  }
+
+  /* 打印栈上的返回地址，便于人工回溯 */
+  uintptr_t *sp = (uintptr_t *)uc->uc_mcontext.sp;
+  n = snprintf(buf, sizeof(buf), "--- stack ---\n");
+  if (n > 0) { ssize_t w = write(1, buf, (size_t)n); (void)w; }
+  for (int i = 0; i < 32; i++) {
+    uintptr_t v = 0;
+    /* 只读用户态地址，避免二次崩溃 */
+    if ((uintptr_t)(sp + i) > 0x1000 && (uintptr_t)(sp + i) < 0x00007fffffffe000ULL)
+      v = sp[i];
+    n = snprintf(buf, sizeof(buf), "  sp+%03x: %016llx\n", i * 8,
+                 (unsigned long long)v);
+    if (n > 0) { ssize_t w = write(1, buf, (size_t)n); (void)w; }
+    debugPrintf("%s", buf);
+  }
+
+  n = snprintf(buf, sizeof(buf), "=== END CRASH ===\n");
+  if (n > 0) { ssize_t w = write(1, buf, (size_t)n); (void)w; }
+  debugPrintf("%s", buf);
+
+  _exit(128 + sig);
+}
+
+static int crash_handler_installed = 0;
+
+static void gmod_install_crash_handler(void) {
+  if (crash_handler_installed) return;
+  struct sigaction sa;
+  memset(&sa, 0, sizeof(sa));
+  sa.sa_sigaction = gmod_crash_handler;
+  sa.sa_flags = SA_SIGINFO | SA_ONSTACK;
+  sigemptyset(&sa.sa_mask);
+  sigaction(SIGSEGV, &sa, NULL);
+  sigaction(SIGBUS,  &sa, NULL);
+  sigaction(SIGILL,  &sa, NULL);
+  sigaction(SIGFPE,  &sa, NULL);
+  sigaction(SIGABRT, &sa, NULL);
+  crash_handler_installed = 1;
+  debugPrintf("crash handler installed (SEGV/BUS/ILL/FPE/ABRT)\n");
+}
 int main(void) {
+  gmod_install_crash_handler();
   saltynx_start();
   debugPrintf("heap: total=%zuMB avail=%zuMB used=%zuMB newlib=%zuMB pool=%zuMB\n",
               g_diag_total >> 20, g_diag_avail >> 20, g_diag_used >> 20,

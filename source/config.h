@@ -11,7 +11,7 @@
 // the 32 preloaded ARM64 .so files, with headroom for page alignment).
 // everything else becomes the newlib heap, which the game allocates from
 // since its malloc/free imports resolve to newlib's.
-#define SO_MEMORY_MB 192
+#define SO_MEMORY_MB 320
 
 // where the game data lives on the SD card. must contain garrysmod/,
 // sourceengine/ (or hl2/), platform/ and lib/ (the APK's arm64-v8a libraries).

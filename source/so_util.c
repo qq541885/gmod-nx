@@ -746,18 +746,28 @@ void so_set_skip_ctors(const char *spec) {
  *
  * Returns 1 for patterns that cannot be a valid no-argument entry point.
  */
-static int so_ctor_is_unsafe(void *fn) {
-  const uint32_t w = *(const uint32_t *)fn;
+/* Some init_array entries in this module set are compiled as if they take a
+ * `this` pointer: their first instruction is `mov x19, x0` followed by
+ * `ldr xN, [x0, #imm]`. init_array calls them as void(*)(void), so x0 holds
+ * whatever the previous call left behind -- usually the so_module* argument,
+ * which is why they mostly survive, and occasionally a wild pointer, which
+ * is what actually crashes.
+ *
+ * Give them a large zeroed scratch block instead: every [x0 + imm] lands in
+ * mapped, writable, all-zero memory, so the constructors observe a zeroed
+ * object (the state a static initializer expects) rather than a stale stack
+ * pointer. x0 is caller-saved, so constructors that ignore it are unaffected.
+ */
+#define CTOR_DUMMY_SIZE (64 * 1024)
+static uint8_t g_ctor_dummy[CTOR_DUMMY_SIZE] __attribute__((aligned(16)));
 
-  /* add x29, sp, #0  -- function body without its prologue; the frame
-   * pointer and every callee-saved register it relies on are undefined. */
-  if (w == 0x910003FDu) return 1;
-
-  /* ldr xN, [x27, #imm] -- x27 is never set up by a no-argument caller. */
-  if ((w & 0xFFC00000u) == 0xF9400000u && (((w >> 5) & 0x1Fu) == 27u)) return 1;
-
-  return 0;
+/* Under AAPCS64 a void(void) and a void(void*) callee differ only in whether
+ * x0 is meaningful, so reinterpreting the pointer and passing the scratch
+ * block sets x0 without any inline assembly. */
+static void so_call_ctor(void (*fn)(void)) {
+  ((void (*)(void *))fn)((void *)g_ctor_dummy);
 }
+
 static int so_ctor_is_skipped(const char *modname, int idx1based) {
   if (!g_skip_spec[0]) return 0;
   const size_t ml = strlen(modname);
@@ -793,16 +803,11 @@ void so_execute_init_array(so_module *mod) {
       debugPrintf("  ctor %d/%d null\n", i + 1, mod->num_init);
       continue;
     }
-    if (so_ctor_is_unsafe((void *)fn)) {
-      debugPrintf("  ctor %d/%d SKIPPED by safety check (insn 0x%08x)\n",
-                  i + 1, mod->num_init, *(const uint32_t *)fn);
-      continue;
-    }
     /* Log before the call. debugPrintf does fopen/fclose per line, so this
      * reaches the SD card even if the constructor never returns; the missing
      * "leave" line then pins the crash to this exact constructor. */
     debugPrintf("  ctor %d/%d enter %p\n", i + 1, mod->num_init, (void *)fn);
-    fn();
+    so_call_ctor(fn);
     debugPrintf("  ctor %d/%d leave\n", i + 1, mod->num_init);
   }
 }

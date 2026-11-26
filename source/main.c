@@ -348,6 +348,20 @@ static int build_argv(char **argv, int max_args) {
 
   if (config.console)
     append_arg(cmdline, sizeof(cmdline), "-console");
+
+  /* Three flags that keep the first run alive:
+   *  -novid    the APK ships no video_bink.so, so the intro would fault
+   *  -nosound  libphonon's AAudio/OpenSL backends are stubs that return
+   *            AAUDIO_ERROR_UNAVAILABLE, and Source treats that as fatal on
+   *            some code paths; drop audio until the画面 is up
+   *  -windowed togl's fullscreen path goes through EGL surface recreation,
+   *            which is the least reliable part of the stack on Horizon
+   */
+  append_arg(cmdline, sizeof(cmdline), "-novid");
+  append_arg(cmdline, sizeof(cmdline), "-nosound");
+  append_arg(cmdline, sizeof(cmdline), "-windowed");
+  append_arg(cmdline, sizeof(cmdline), "-noborder");
+
   append_arg(cmdline, sizeof(cmdline), "+mat_queue_mode");
   append_arg(cmdline, sizeof(cmdline), "2");
   append_arg(cmdline, sizeof(cmdline), "+joystick");
@@ -554,6 +568,16 @@ int main(void) {
 
   check_data();
   set_screen_size();
+
+  /* Mesa 的 EGL 在创建 surface 时读默认 nwindow 的尺寸。不显式设置的话，
+   * dock / 掌机切换后可能拿到过期尺寸，engine 的首帧就对不上。 */
+  {
+    NWindow *win = nwindowGetDefault();
+    if (win) {
+      Result rc = nwindowSetDimensions(win, (u32)screen_width, (u32)screen_height);
+      debugPrintf("nwindow %dx%d -> %08x\n", screen_width, screen_height, rc);
+    }
+  }
 
   fake_tls_install();
   jni_init();

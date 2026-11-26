@@ -282,13 +282,18 @@ void __assert2_fake(const char *file, int line, const char *func, const char *ex
 void fake_tls_install(void) {
   if (armGetTlsRw() != NULL)
     return; // already installed for this thread
-  uint8_t *block = calloc(1, 0x1000);
+  /* 64 KB, thread pointer centred. libc++_shared.so uses __thread for its
+   * locale/exception state and those offsets are not the small bionic slots
+   * this block was originally sized for; a 4 KB block with TP at +0x800 left
+   * only 2 KB of positive space and faulted as soon as a larger offset was
+   * touched. Centring keeps both signs inside the allocation. */
+  uint8_t *block = calloc(1, 0x10000);
   if (!block) {
     debugPrintf("fake_tls_install: out of memory\n");
     return;
   }
   // block is leaked on purpose: it must outlive the thread
-  armSetTlsRw(block + 0x800);
+  armSetTlsRw(block + 0x8000);
 }
 
 // ---------------------------------------------------------------------------

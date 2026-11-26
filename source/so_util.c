@@ -803,12 +803,11 @@ void so_execute_init_array(so_module *mod) {
       debugPrintf("  ctor %d/%d null\n", i + 1, mod->num_init);
       continue;
     }
-    /* Log before the call. debugPrintf does fopen/fclose per line, so this
-     * reaches the SD card even if the constructor never returns; the missing
-     * "leave" line then pins the crash to this exact constructor. */
+    /* One line per constructor. A missing "enter" for ctor N+1 means ctor N
+     * never returned, so a separate "leave" line would only double the write
+     * count (~2100 lines on the SD card). */
     debugPrintf("  ctor %d/%d enter %p\n", i + 1, mod->num_init, (void *)fn);
     so_call_ctor(fn);
-    debugPrintf("  ctor %d/%d leave\n", i + 1, mod->num_init);
   }
 }
 

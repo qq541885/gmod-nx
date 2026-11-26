@@ -46,21 +46,33 @@ void userAppExit(void) {
 
 #endif
 
+/* Kept open for the whole run. fopen/fclose per line cost a full filesystem
+ * round-trip each; with ~4000 constructor lines that alone dominated boot
+ * time on the SD card. fflush still forces the bytes out so a crash cannot
+ * swallow the tail of the trace. */
+static FILE *s_log = NULL;
+
 int debugPrintf(const char *text, ...) {
 #if DEBUG_LOG
   va_list list;
 
-  FILE *f = fopen(LOG_NAME, "a");
-  if (f) {
+  if (s_log == NULL)
+    s_log = fopen(LOG_NAME, "a");
+
+  if (s_log != NULL) {
     va_start(list, text);
-    vfprintf(f, text, list);
+    vfprintf(s_log, text, list);
     va_end(list);
-    fclose(f);
+    fflush(s_log);
   }
 
-  va_start(list, text);
-  vprintf(text, list);
-  va_end(list);
+  /* Only mirror to the host when nxlink is actually connected; an
+   * unconnected socket makes vprintf block on every call. */
+  if (s_nxlinkSock >= 0) {
+    va_start(list, text);
+    vprintf(text, list);
+    va_end(list);
+  }
 #endif
   return 0;
 }

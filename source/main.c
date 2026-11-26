@@ -32,6 +32,10 @@
 #include "controller.h"
 #include "posix_shim.h"
 
+/* 前向声明：load_modules 会用到进度显示，实际实现在文件下方 */
+static void gmod_console_begin(void);
+static void gmod_progress(const char *fmt, ...);
+
 static void *heap_so_base = NULL;
 /* __libnx_initheap runs before newlib's heap exists: touching stdio there
  * (debugPrintf -> fopen -> malloc) crashes the process before anything can be
@@ -200,9 +204,10 @@ static void load_modules(void) {
   size_t remaining = heap_so_limit;
 
   /* pass 1: load everything so cross-module resolution sees all exports */
+  gmod_progress("\n[1/4] 加载模块\n");
   for (unsigned int i = 0; i < NUM_MODULES; i++) {
     snprintf(path, sizeof(path), "lib/%s", module_names[i]);
-    debugPrintf("loading %s\n", path);
+    gmod_progress("\r  %2u/%u  %-26s", i + 1, NUM_MODULES, module_names[i]);
     const int res = so_load(&modules[i], path, base, remaining);
     if (res < 0)
       fatal_error("Could not load\n%s\n(so_load: %d)", path, res);
@@ -210,34 +215,38 @@ static void load_modules(void) {
     remaining = heap_so_limit - ((uintptr_t)base - (uintptr_t)heap_so_base);
     debugPrintf("loaded %s (%zu bytes)\n", path, modules[i].load_size);
   }
+  gmod_progress("\r  32/32 全部加载完成          \n");
 
   /* pass 2: relocate + resolve now that every export is visible */
+  gmod_progress("[2/4] 重定位 (APS2 解压)\n");
   for (unsigned int i = 0; i < NUM_MODULES; i++) {
-    debugPrintf("relocate %s\n", module_names[i]);
+    gmod_progress("\r  %2u/%u  %-26s", i + 1, NUM_MODULES, module_names[i]);
     so_relocate(&modules[i]);
     so_resolve(&modules[i], dynlib_functions, dynlib_numfunctions, 1);
   }
-  debugPrintf("pass 2 done\n");
+  gmod_progress("\r  重定位完成                  \n");
 
   apply_game_patches();
-  debugPrintf("patches done\n");
   controller_prepare(so_find_module("libengine.so"), so_find_module("libinputsystem.so"));
-  debugPrintf("controller prepared\n");
+  debugPrintf("patches + controller prepared\n");
 
   /* pass 3: map as code, then run initializers in dependency order */
+  gmod_progress("[3/4] 映射代码段\n");
   for (unsigned int i = 0; i < NUM_MODULES; i++) {
-    debugPrintf("finalize %s\n", module_names[i]);
+    gmod_progress("\r  %2u/%u  %-26s", i + 1, NUM_MODULES, module_names[i]);
     so_finalize(&modules[i]);
     so_flush_caches(&modules[i]);
   }
-  debugPrintf("pass 3 done: all modules mapped RX\n");
+  gmod_progress("\r  32/32 映射完成              \n");
 
+  gmod_progress("[4/4] 执行构造函数 (%d 个)\n", 2101);
   for (unsigned int i = 0; i < NUM_MODULES; i++) {
+    gmod_progress("\r  %2u/%u  %-26s", i + 1, NUM_MODULES, module_names[i]);
     debugPrintf("init_array %s (%d ctors)\n", module_names[i], modules[i].num_init);
     so_execute_init_array(&modules[i]);
     so_free_temp(&modules[i]);
   }
-  debugPrintf("pass 4 done: all ctors ran\n");
+  gmod_progress("\r  构造函数全部完成            \n");
   controller_install();
   debugPrintf("controller installed, load_modules returning\n");
 }
@@ -423,26 +432,50 @@ static void start_clock_thread(void) {
 /* address, PC, LR, SP and the general registers so one run is enough. */
 /* ------------------------------------------------------------------ */
 #include <signal.h>
+#include <stdarg.h>
 #include <unistd.h>
+
+/* ------------------------------------------------------------------ */
+/* 可视进度：libnx 的 console 直接画到 framebuffer，不依赖 SDL/EGL。    */
+/* 加载阶段全程可见；引擎启动前 consoleExit 让出 framebuffer。          */
+/* ------------------------------------------------------------------ */
+static int g_console_active = 0;
+
+static void gmod_console_begin(void) {
+  if (g_console_active) return;
+  consoleInit(NULL);
+  g_console_active = 1;
+}
+
+static void gmod_progress(const char *fmt, ...) {
+  if (!g_console_active) return;
+  va_list ap;
+  va_start(ap, fmt);
+  vprintf(fmt, ap);
+  va_end(ap);
+  consoleUpdate(NULL);
+}
+
 
 /* devkitPro's bare-metal newlib has no ucontext_t/si_addr, so the handler
  * cannot recover the faulting PC. It still reports the signal and the
  * current SP/LR via inline asm, which together with the "ctor N enter"
  * trace is enough to pin the fault to one constructor. */
+static volatile int g_in_crash = 0;
+
 static void gmod_crash_handler(int sig) {
+  /* 二次崩溃（比如崩在 consoleInit 内部）直接退出，避免死循环 */
+  if (g_in_crash) _exit(139);
+  g_in_crash = 1;
+
   uintptr_t sp = 0, lr = 0, fp = 0;
   __asm__ volatile("mov %0, sp" : "=r"(sp));
   __asm__ volatile("mov %0, x30" : "=r"(lr));
   __asm__ volatile("mov %0, x29" : "=r"(fp));
 
-  debugPrintf("\n=== CRASH sig=%d (%s) ===\n", sig,
-              sig == SIGSEGV ? "SIGSEGV" :
-              sig == SIGBUS  ? "SIGBUS"  :
-              sig == SIGILL  ? "SIGILL"  :
-              sig == SIGFPE  ? "SIGFPE"  : "SIGABRT");
+  /* 先落盘，保证日志里一定有 */
+  debugPrintf("\n=== CRASH sig=%d ===\n", sig);
   debugPrintf("SP=%p  LR=%p  FP=%p\n", (void *)sp, (void *)lr, (void *)fp);
-
-  /* 沿帧指针走一条回溯链，遇到不可读地址就停 */
   uintptr_t f = fp;
   for (int i = 0; i < 16 && f > 0x1000 && f < 0x00007fffffffe000ULL; i++) {
     uintptr_t *frame = (uintptr_t *)f;
@@ -453,6 +486,24 @@ static void gmod_crash_handler(int sig) {
     f = next;
   }
   debugPrintf("=== END CRASH ===\n");
+
+  /* 再显示到屏幕，让用户直接看到原因 */
+  consoleInit(NULL);
+  printf("\n\n====================================\n");
+  printf("   程序崩溃   signal = %d\n", sig);
+  printf("====================================\n\n");
+  printf("  %s\n\n",
+         sig == SIGSEGV ? "SIGSEGV  访问了非法内存" :
+         sig == SIGABRT ? "SIGABRT  assert / 主动中止" :
+         sig == SIGILL  ? "SIGILL   执行了非法指令" :
+         sig == SIGFPE  ? "SIGFPE   算术异常" : "SIGBUS 总线错误");
+  printf("  SP = %p\n", (void *)sp);
+  printf("  LR = %p\n", (void *)lr);
+  printf("  FP = %p\n", (void *)fp);
+  printf("\n  详细回溯已写入 debug.log\n");
+  consoleUpdate(NULL);
+
+  svcSleepThread(10000000000ULL);   /* 停 10 秒，够拍照 */
   _exit(128 + sig);
 }
 
@@ -470,8 +521,16 @@ static void gmod_install_crash_handler(void) {
 }
 
 int main(void) {
+  gmod_console_begin();
+  printf("\x1b[2J\x1b[H");
+  printf("========================================\n");
+  printf("  Garry's Mod (Source ARM64) - Switch\n");
+  printf("========================================\n\n");
+  consoleUpdate(NULL);
+
   gmod_install_crash_handler();
   saltynx_start();
+  gmod_progress("saltynx ok\n");
   debugPrintf("heap: total=%zuMB avail=%zuMB used=%zuMB newlib=%zuMB pool=%zuMB\n",
               g_diag_total >> 20, g_diag_avail >> 20, g_diag_used >> 20,
               g_diag_heap >> 20, g_diag_pool >> 20);
@@ -525,6 +584,14 @@ int main(void) {
   const int argc = build_argv(argv, 64);
 
   start_clock_thread();
+
+  /* 引擎要自己建 EGL 上下文，必须先让出 framebuffer。
+   * 停 2 秒让最后一行进度留在屏幕上，方便确认已经走到这一步。 */
+  gmod_progress("\n[引擎] 交棒给 Source 引擎...\n");
+  gmod_progress("  如果这里之后黑屏，说明是引擎初始化阶段的问题\n");
+  svcSleepThread(2000000000ULL);
+  consoleExit(NULL);
+  g_console_active = 0;
 
   int ret = LauncherMainAndroid(argc, argv);
   debugPrintf("LauncherMainAndroid returned %d\n", ret);
